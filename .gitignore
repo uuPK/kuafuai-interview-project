@@ -22,9 +22,19 @@ coverage/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.uv-cache/
 __pycache__/
 *.py[cod]
 *.tsbuildinfo
+*.egg-info/
+.coverage
+htmlcov/
+
+# Runtime database, source material and drafts
+data/
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
 
 # Local logs and operating system files
 *.log
