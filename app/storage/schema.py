@@ -1,0 +1,49 @@
+"""Versioned SQLite schema, introduced incrementally with implementation steps."""
+
+SCHEMA_VERSION = 1
+
+SCHEMA_V1 = (
+    """
+    CREATE TABLE runs (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        subscription_id TEXT NOT NULL,
+        mode TEXT NOT NULL CHECK (mode IN ('preview', 'scheduled')),
+        status TEXT NOT NULL CHECK (status IN (
+            'queued', 'running', 'waiting_retry', 'completed', 'no_news', 'failed'
+        )),
+        subscription_json TEXT NOT NULL,
+        budget_limits_json TEXT NOT NULL,
+        budget_usage_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        scheduled_for TEXT,
+        window_start TEXT NOT NULL,
+        window_end TEXT NOT NULL,
+        started_at TEXT,
+        deadline_at TEXT,
+        retry_at TEXT,
+        stop_reason TEXT,
+        CHECK (window_start < window_end),
+        CHECK ((mode = 'scheduled') = (scheduled_for IS NOT NULL)),
+        CHECK (scheduled_for IS NULL OR scheduled_for = window_end),
+        CHECK ((started_at IS NULL) = (deadline_at IS NULL)),
+        CHECK (status != 'queued' OR started_at IS NULL),
+        CHECK (status IN ('queued', 'failed') OR started_at IS NOT NULL),
+        CHECK ((status = 'waiting_retry') = (retry_at IS NOT NULL)),
+        CHECK (status != 'failed' OR stop_reason IS NOT NULL)
+    )
+    """,
+    "CREATE INDEX runs_user_created ON runs(user_id, created_at, id)",
+    "CREATE INDEX runs_status_retry ON runs(status, retry_at)",
+    """
+    CREATE TABLE run_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        data_json TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX run_events_timeline ON run_events(run_id, id)",
+)
