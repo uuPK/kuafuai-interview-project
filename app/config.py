@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = Field(default=30, gt=0, allow_inf_nan=False)
     external_max_attempts: int = Field(default=3, ge=1, le=3)
     retry_base_seconds: float = Field(default=1, gt=0, allow_inf_nan=False)
+    retry_inline_max_seconds: float = Field(default=5, ge=0, le=30, allow_inf_nan=False)
     max_redirects: int = Field(default=5, ge=0, le=10)
     max_download_bytes: int = Field(default=2_000_000, ge=1)
 

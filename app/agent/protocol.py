@@ -4,6 +4,7 @@ from typing import Annotated, Literal, Protocol, Self
 
 from pydantic import Field, JsonValue, TypeAdapter, model_validator
 
+from app.harness.failures import FailureInfo
 from app.tools.models import CallId, ToolInvocation, ToolName, ToolParameters
 
 
@@ -104,7 +105,20 @@ class ModelClient(Protocol):
 class ModelFailure(Exception):
     """Controlled dependency failure; exception text is never copied into events."""
 
-    def __init__(self, code: str, *, retryable: bool = False) -> None:
-        self.code = code
-        self.retryable = retryable
+    def __init__(
+        self,
+        code: str,
+        *,
+        retryable: bool = False,
+        retry_after: str | None = None,
+        category: str | None = None,
+    ) -> None:
+        self.info = FailureInfo(
+            code=code,
+            retryable=retryable,
+            retry_after=retry_after,
+            category=category or ("transient" if retryable else "observation"),
+        )
+        self.code = self.info.code
+        self.retryable = self.info.retryable
         super().__init__(code)

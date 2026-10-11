@@ -30,6 +30,7 @@ class ToolDefinition:
     handler: Handler
     budget_dimension: Literal["tool_calls", "searches", "fetches"] = "tool_calls"
     completion_status: CompletionResolver | None = None
+    retry_safe: bool = False
 
     def __post_init__(self) -> None:
         ToolMetadata(
@@ -53,6 +54,8 @@ class ToolDefinition:
             or inspect.iscoroutinefunction(self.completion_status)
         ):
             raise ValueError("completion resolver must be synchronous and callable")
+        if not isinstance(self.retry_safe, bool):
+            raise ValueError("retry safety must be an explicit server-side boolean")
 
     def schema(self) -> dict:
         return {

@@ -100,6 +100,7 @@ def build_stub_registry() -> ToolRegistry:
             parameters=SearchParameters,
             handler=search_fixture,
             budget_dimension="searches",
+            retry_safe=True,
         )
     )
     registry.register(
@@ -109,6 +110,7 @@ def build_stub_registry() -> ToolRegistry:
             parameters=FetchParameters,
             handler=fetch_fixture,
             budget_dimension="fetches",
+            retry_safe=True,
         )
     )
     return registry

@@ -2,7 +2,6 @@
 
 import sqlite3
 from collections.abc import Callable
-from datetime import UTC, datetime
 from enum import StrEnum
 
 from pydantic import AwareDatetime
@@ -87,7 +86,7 @@ class CallStore:
                 if existing["invocation_hash"] != call.fingerprint:
                     raise CallConflictError("tool call ID conflicts with its saved invocation")
                 continue
-            at = datetime.now(UTC)
+            at = self.runs.now()
             connection.execute(
                 """INSERT INTO tool_calls (
                     run_id, tool_call_id, name, arguments, invocation_hash, status, created_at
@@ -123,28 +122,40 @@ class CallStore:
         self, run_id: str, user_id: str, call_id: str, charge: BudgetCharge
     ) -> CallRecord:
         with self.database.transaction() as connection:
-            run = _record(self.runs._owned_row(connection, run_id, user_id))
-            call = _call_record(self._row(connection, run_id, call_id))
-            if call.status != CallStatus.PENDING:
-                raise CallInProgressError("tool call is not pending")
-            at = datetime.now(UTC)
-            self.runs._consume_budget(connection, run, BudgetCharge.model_validate(charge), at)
-            connection.execute(
-                """UPDATE tool_calls SET status = 'executing', started_at = ?
-                    WHERE run_id = ? AND tool_call_id = ?""",
-                (timestamp(at), run_id, call_id),
-            )
-            self.runs._append_event(
-                connection,
-                run_id,
-                "tool_executing",
-                at,
-                {
-                    "tool_call_id": call_id,
-                    "name": call.name,
-                },
-            )
-            return _call_record(self._row(connection, run_id, call_id))
+            return self._start_call(connection, run_id, user_id, call_id, charge)
+
+    def _start_call(
+        self,
+        connection: sqlite3.Connection,
+        run_id: str,
+        user_id: str,
+        call_id: str,
+        charge: BudgetCharge,
+        *,
+        at=None,
+    ) -> CallRecord:
+        run = _record(self.runs._owned_row(connection, run_id, user_id))
+        call = _call_record(self._row(connection, run_id, call_id))
+        if call.status != CallStatus.PENDING:
+            raise CallInProgressError("tool call is not pending")
+        at = self.runs.now() if at is None else at
+        self.runs._consume_budget(connection, run, BudgetCharge.model_validate(charge), at)
+        connection.execute(
+            """UPDATE tool_calls SET status = 'executing', started_at = ?
+                WHERE run_id = ? AND tool_call_id = ?""",
+            (timestamp(at), run_id, call_id),
+        )
+        self.runs._append_event(
+            connection,
+            run_id,
+            "tool_executing",
+            at,
+            {
+                "tool_call_id": call_id,
+                "name": call.name,
+            },
+        )
+        return _call_record(self._row(connection, run_id, call_id))
 
     def finish_call(
         self,
@@ -155,36 +166,50 @@ class CallStore:
         *,
         on_finished: Callable[[sqlite3.Connection, CallRecord], None] | None = None,
     ) -> CallRecord:
-        result = ToolResult.model_validate(result)
         with self.database.transaction() as connection:
-            self.runs._owned_row(connection, run_id, user_id)
-            call = _call_record(self._row(connection, run_id, call_id))
-            if call.status == CallStatus.COMPLETED:
-                if call.result != result:
-                    raise CallConflictError("completed tool result cannot be changed")
-                return call
-            if call.status == CallStatus.PENDING and result.ok:
-                raise CallConflictError("unexecuted calls cannot have successful results")
-            at = datetime.now(UTC)
-            connection.execute(
-                """UPDATE tool_calls SET status = 'completed', finished_at = ?, result_json = ?
-                    WHERE run_id = ? AND tool_call_id = ?""",
-                (timestamp(at), result.model_dump_json(), run_id, call_id),
+            return self._finish_call(
+                connection, run_id, user_id, call_id, result, on_finished=on_finished
             )
-            self.runs._append_event(
-                connection,
-                run_id,
-                "tool_completed",
-                at,
-                {
-                    "tool_call_id": call_id,
-                    "name": call.name,
-                    "ok": result.ok,
-                    "error_code": result.error.code if result.error else None,
-                    "result_chars": len(result.model_dump_json()),
-                },
-            )
-            completed = _call_record(self._row(connection, run_id, call_id))
-            if on_finished is not None:
-                on_finished(connection, completed)
-            return completed
+
+    def _finish_call(
+        self,
+        connection: sqlite3.Connection,
+        run_id: str,
+        user_id: str,
+        call_id: str,
+        result: ToolResult,
+        *,
+        on_finished: Callable[[sqlite3.Connection, CallRecord], None] | None = None,
+    ) -> CallRecord:
+        result = ToolResult.model_validate(result)
+        self.runs._owned_row(connection, run_id, user_id)
+        call = _call_record(self._row(connection, run_id, call_id))
+        if call.status == CallStatus.COMPLETED:
+            if call.result != result:
+                raise CallConflictError("completed tool result cannot be changed")
+            return call
+        if call.status == CallStatus.PENDING and result.ok:
+            raise CallConflictError("unexecuted calls cannot have successful results")
+        at = self.runs.now()
+        connection.execute(
+            """UPDATE tool_calls SET status = 'completed', finished_at = ?, result_json = ?
+                WHERE run_id = ? AND tool_call_id = ?""",
+            (timestamp(at), result.model_dump_json(), run_id, call_id),
+        )
+        self.runs._append_event(
+            connection,
+            run_id,
+            "tool_completed",
+            at,
+            {
+                "tool_call_id": call_id,
+                "name": call.name,
+                "ok": result.ok,
+                "error_code": result.error.code if result.error else None,
+                "result_chars": len(result.model_dump_json()),
+            },
+        )
+        completed = _call_record(self._row(connection, run_id, call_id))
+        if on_finished is not None:
+            on_finished(connection, completed)
+        return completed

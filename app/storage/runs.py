@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -51,10 +52,6 @@ class BudgetExceededError(RuntimeError):
         super().__init__(f"run budget exhausted: {dimension}")
 
 
-def _now(value: datetime | None) -> datetime:
-    return as_utc(value) if value is not None else datetime.now(UTC)
-
-
 def _record(row: sqlite3.Row) -> RunRecord:
     values = dict(row)
     values["subscription"] = SubscriptionSnapshot.model_validate_json(
@@ -66,9 +63,15 @@ def _record(row: sqlite3.Row) -> RunRecord:
 
 
 class RunStore:
-    def __init__(self, database: Database, settings: Settings) -> None:
+    def __init__(
+        self, database: Database, settings: Settings, *, clock: Callable[[], datetime] | None = None
+    ) -> None:
         self.database = database
         self.budget_limits = BudgetLimits.from_settings(settings)
+        self.clock = clock or (lambda: datetime.now(UTC))
+
+    def now(self, value: datetime | None = None) -> datetime:
+        return as_utc(value if value is not None else self.clock())
 
     @staticmethod
     def _owned_row(connection: sqlite3.Connection, run_id: str, user_id: str) -> sqlite3.Row:
@@ -91,7 +94,7 @@ class RunStore:
 
     def create_run(self, request: RunRequest, *, now: datetime | None = None) -> RunRecord:
         request = RunRequest.model_validate(request)
-        created = _now(now)
+        created = self.now(now)
         window_end = request.scheduled_for if request.scheduled_for is not None else created
         run_id = str(uuid4())
         with self.database.transaction() as connection:
@@ -135,7 +138,7 @@ class RunStore:
         change = StateChange.model_validate(change)
         with self.database.transaction() as connection:
             run = _record(self._owned_row(connection, run_id, user_id))
-            return self._transition(connection, run, change, _now(now))
+            return self._transition(connection, run, change, self.now(now))
 
     def _transition(
         self, connection: sqlite3.Connection, run: RunRecord, change: StateChange, at: datetime
@@ -194,7 +197,7 @@ class RunStore:
         charge = BudgetCharge.model_validate(charge)
         with self.database.transaction() as connection:
             run = _record(self._owned_row(connection, run_id, user_id))
-            return self._consume_budget(connection, run, charge, _now(now))
+            return self._consume_budget(connection, run, charge, self.now(now))
 
     def _consume_budget(
         self, connection: sqlite3.Connection, run: RunRecord, charge: BudgetCharge, at: datetime

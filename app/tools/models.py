@@ -76,6 +76,22 @@ class ToolResult(ToolParameters):
 class ToolFailure(Exception):
     """Handlers raise controlled failures; arbitrary exceptions are never echoed."""
 
-    def __init__(self, code: str, message: str, *, retryable: bool = False) -> None:
-        self.result = ToolResult.failure(code, message, retryable=retryable)
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        retryable: bool = False,
+        retry_after: str | None = None,
+        category: str | None = None,
+    ) -> None:
+        from app.harness.failures import FailureInfo
+
+        self.info = FailureInfo(
+            code=code,
+            retryable=retryable,
+            retry_after=retry_after,
+            category=category or ("transient" if retryable else "observation"),
+        )
+        self.result = ToolResult.failure(code, message, retryable=self.info.retryable)
         super().__init__(code)

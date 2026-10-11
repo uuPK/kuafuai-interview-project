@@ -7,6 +7,7 @@ import pytest
 
 import app.storage.database as database_module
 from app.storage.database import Database, SchemaVersionError
+from app.storage.schema import SCHEMA_V1, SCHEMA_V2, SCHEMA_V3
 
 
 def test_initialize_is_idempotent_and_connections_are_configured(tmp_path: Path) -> None:
@@ -19,7 +20,7 @@ def test_initialize_is_idempotent_and_connections_are_configured(tmp_path: Path)
         assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 1234
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert connection.execute("PRAGMA synchronous").fetchone()[0] == 2
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
         assert {
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
@@ -104,3 +105,80 @@ def test_non_wal_storage_is_rejected(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(database, "connection", in_memory_connection)
     with pytest.raises(RuntimeError, match="WAL"):
         database.initialize()
+
+
+def test_v4_upgrade_preserves_full_v3_conversation(tmp_path, tool_env, response_factory):
+    from app.agent.prompts import initial_messages
+    from app.agent.protocol import ToolMessage
+    from app.storage.calls import CallStore
+    from app.storage.conversations import ConversationStore
+    from app.storage.models import RunRequest, StateChange, timestamp
+    from app.storage.runs import RunStore
+    from app.tools.models import ToolResult
+
+    database = Database(tmp_path / "old.sqlite3")
+    with database.transaction() as connection:
+        for statement in (*SCHEMA_V1, *SCHEMA_V2, *SCHEMA_V3):
+            connection.execute(statement)
+        connection.execute("PRAGMA user_version = 3")
+    runs = RunStore(database, tool_env.settings)
+    run = runs.create_run(
+        RunRequest(
+            user_id="user-1",
+            subscription_id="sub-1",
+            subscription=tool_env.run.subscription,
+        )
+    )
+    run = runs.transition(run.id, "user-1", StateChange(status="running"))
+    calls = CallStore(runs)
+    conversations = ConversationStore(calls)
+    conversations.initialize(run.id, "user-1", initial_messages(run))
+    response = response_factory(("saved", "unknown", {}), reasoning="保留历史思考")
+    invocation = response.message.tool_calls[0].invocation()
+    result = ToolResult.failure("UNKNOWN_TOOL", "历史反馈")
+    with database.transaction() as connection:
+        connection.execute(
+            "INSERT INTO model_responses VALUES (?, 1, ?, ?)",
+            (run.id, response.model_dump_json(), timestamp(runs.now())),
+        )
+        calls._prepare_calls(connection, run.id, "user-1", [invocation])
+        connection.execute("INSERT INTO model_tool_calls VALUES (?, 1, 0, 'saved')", (run.id,))
+        conversations._append_message(connection, run.id, response.message, runs.now(), turn=1)
+        calls._finish_call(connection, run.id, "user-1", "saved", result)
+        conversations._append_message(
+            connection,
+            run.id,
+            ToolMessage(tool_call_id="saved", content=result.model_dump_json()),
+            runs.now(),
+            turn=1,
+        )
+    before = conversations.messages(run.id, "user-1")
+    database.initialize()
+    database.initialize()
+    assert conversations.messages(run.id, "user-1") == before
+    assert conversations.responses(run.id, "user-1") == (response,)
+    assert calls.get_call(run.id, "user-1", "saved").result == result
+    assert runs.get_run(run.id, "user-1").deadline_at == run.deadline_at
+    with database.connection() as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert connection.execute("SELECT request_id FROM model_responses").fetchone()[0] is None
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_v4_upgrade_failure_restores_original_table_and_indexes(tmp_path, monkeypatch):
+    database = Database(tmp_path / "old.sqlite3")
+    with database.transaction() as connection:
+        for statement in (*SCHEMA_V1, *SCHEMA_V2, *SCHEMA_V3):
+            connection.execute(statement)
+        connection.execute("PRAGMA user_version = 3")
+    monkeypatch.setattr(database_module, "SCHEMA_V4", (*database_module.SCHEMA_V4, "INVALID SQL"))
+    with pytest.raises(sqlite3.OperationalError):
+        database.initialize()
+    with database.connection() as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        names = {row[0] for row in connection.execute("SELECT name FROM sqlite_master")}
+        assert {"run_messages", "tool_feedback_once", "assistant_response_once"} <= names
+        assert "external_requests" not in names and "run_messages_v3" not in names
+        assert "request_id" not in {
+            row[1] for row in connection.execute("PRAGMA table_info(model_responses)")
+        }

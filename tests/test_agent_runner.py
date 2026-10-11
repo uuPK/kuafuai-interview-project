@@ -358,9 +358,13 @@ def test_response_save_failure_does_not_execute_any_tool(agent_env, response_fac
 )
 def test_model_failures_have_safe_persisted_stop_reasons(agent_env, failure, reason):
     class Model:
+        attempts = 0
+
         async def complete(self, request):
+            self.attempts += 1
             assert (
-                agent_env.runs.get_run(agent_env.run.id, "user-1").budget_usage.model_requests == 1
+                agent_env.runs.get_run(agent_env.run.id, "user-1").budget_usage.model_requests
+                == self.attempts
             )
             if failure == "invalid":
                 return {"unexpected": "fixture-deep-key"}

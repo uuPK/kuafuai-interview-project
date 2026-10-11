@@ -1,15 +1,21 @@
-"""Validate, record, execute, sanitize and bound each call; no retries are implicit."""
+"""Validate and persist logical calls; retry only trusted, explicitly safe operations."""
 
 import asyncio
 import json
 import re
 import sqlite3
 from collections.abc import Callable
-from datetime import UTC, datetime
 
 from pydantic import ValidationError
 
 from app.config import Settings
+from app.harness.failures import (
+    FATAL_CATEGORIES,
+    FailureInfo,
+    RequestInProgressError,
+    RetryDeferredError,
+)
+from app.harness.guardrails import GuardrailStore
 from app.storage.calls import (
     CallConflictError,
     CallInProgressError,
@@ -18,7 +24,8 @@ from app.storage.calls import (
     CallStore,
 )
 from app.storage.models import BudgetCharge, RunStatus
-from app.storage.runs import BudgetExceededError, InvalidRunStateError, RunNotFoundError
+from app.storage.requests import RequestStore
+from app.storage.runs import BudgetExceededError, RunNotFoundError
 from app.tools.context import bind_context
 from app.tools.models import ArgumentIssue, ToolFailure, ToolInvocation, ToolParameters, ToolResult
 from app.tools.registry import ToolDefinition, ToolRegistry
@@ -40,10 +47,15 @@ def _reject_constant(value: str) -> None:
 
 
 class ToolExecutor:
-    def __init__(self, registry: ToolRegistry, calls: CallStore, settings: Settings) -> None:
+    def __init__(
+        self, registry: ToolRegistry, calls: CallStore, settings: Settings, *, sleep=asyncio.sleep
+    ) -> None:
         self.registry = registry
         self.calls = calls
         self.settings = settings
+        self.requests = RequestStore(calls)
+        self.guards = GuardrailStore(calls.runs)
+        self.sleep = sleep
         self._secrets = tuple(
             value.get_secret_value()
             for name in (
@@ -114,6 +126,26 @@ class ToolExecutor:
             "INVALID_ARGUMENTS", "参数不符合工具 schema，请检查字段与类型。", details=issues
         )
 
+    def finish(
+        self, run_id, user_id, invocation, result, *, on_finished=None, stop_reason=None
+    ) -> ToolResult:
+        request = self.requests.for_tool(run_id, user_id, invocation.tool_call_id)
+        if request is not None:
+            record = self.requests.complete_tool(
+                request.id, user_id, result, on_finished=on_finished, stop_reason=stop_reason
+            )
+        else:
+            record = self.calls.finish_call(
+                run_id, user_id, invocation.tool_call_id, result, on_finished=on_finished
+            )
+        return record.result
+
+    @staticmethod
+    def _in_progress() -> ToolResult:
+        return ToolResult.failure(
+            "CALL_IN_PROGRESS", "该调用尚未完成，需等待执行或恢复。", retryable=True
+        )
+
     async def execute(
         self,
         run_id: str,
@@ -131,12 +163,41 @@ class ToolExecutor:
             return ToolResult.failure("CALL_ID_CONFLICT", "调用 ID 与已保存的调用不一致。")
         if record.status == CallStatus.COMPLETED:
             return record.result
-        if record.status == CallStatus.EXECUTING:
-            return ToolResult.failure(
-                "CALL_IN_PROGRESS", "该调用尚未完成，需等待执行或恢复。", retryable=True
+        request = self.requests.for_tool(run_id, user_id, invocation.tool_call_id)
+        if record.status == CallStatus.EXECUTING and (
+            request is None or request.status == "executing"
+        ):
+            return self._in_progress()
+        if request is not None and request.status == "completed" and request.feedback is not None:
+            result = request.feedback
+            if request.stop_reason == "retry_deadline":
+                result = ToolResult.failure("BUDGET_EXCEEDED", "重试无法在任务截止时间内完成。")
+            return self.finish(run_id, user_id, invocation, result, on_finished=on_finished)
+        run = self.calls.runs.get_run(run_id, user_id)
+        if run.status == RunStatus.WAITING_RETRY and request is not None:
+            raise RetryDeferredError("tool retry is waiting")
+        if run.status != RunStatus.RUNNING:
+            terminal = run.status in {RunStatus.COMPLETED, RunStatus.NO_NEWS, RunStatus.FAILED}
+            return self.finish(
+                run_id,
+                user_id,
+                invocation,
+                ToolResult.failure(
+                    "RUN_FINISHED" if terminal else "RUN_NOT_RUNNING", "任务已结束或暂未运行。"
+                ),
+                on_finished=on_finished,
             )
 
         definition = self.registry.get(invocation.name)
+        if record.status == CallStatus.PENDING:
+            guard = self.guards.before_new_call(
+                run_id,
+                user_id,
+                invocation,
+                is_submission=definition is not None and definition.completion_status is not None,
+            )
+            if guard is not None:
+                return self.finish(run_id, user_id, invocation, guard, on_finished=on_finished)
         problem, parameters, context = None, None, None
         if definition is None:
             problem = ToolResult.failure("UNKNOWN_TOOL", "工具未注册，请使用已提供的工具。")
@@ -150,55 +211,89 @@ class ToolExecutor:
                 problem = ToolResult.failure(
                     "PERMISSION_DENIED", "工具任务目录或所属用户校验失败。"
                 )
-
-        charge = {"tool_calls": 1}
-        if problem is None and definition.budget_dimension != "tool_calls":
-            charge[definition.budget_dimension] = 1
-        try:
-            self.calls.start_call(run_id, user_id, invocation.tool_call_id, BudgetCharge(**charge))
-        except CallInProgressError:
-            # Another executor may have completed between prepare and the execution claim.
-            current = self.calls.get_call(run_id, user_id, invocation.tool_call_id)
-            return (
-                current.result
-                if current.result is not None
-                else ToolResult.failure(
-                    "CALL_IN_PROGRESS", "该调用尚未完成，需等待执行或恢复。", retryable=True
-                )
-            )
-        except BudgetExceededError as error:
-            problem = ToolResult.failure("BUDGET_EXCEEDED", f"任务预算已耗尽：{error.dimension}。")
-        except InvalidRunStateError:
-            run = self.calls.runs.get_run(run_id, user_id)
-            terminal = run.status in {RunStatus.COMPLETED, RunStatus.NO_NEWS, RunStatus.FAILED}
-            problem = ToolResult.failure(
-                "RUN_FINISHED" if terminal else "RUN_NOT_RUNNING", "任务已结束或暂未运行。"
-            )
-        else:
-            if problem is None:
+        if problem is not None:
+            if record.status == CallStatus.PENDING:
                 try:
-                    remaining = (context.deadline_at - datetime.now(UTC)).total_seconds()
-                    result = await asyncio.wait_for(
+                    self.calls.start_call(
+                        run_id, user_id, invocation.tool_call_id, BudgetCharge(tool_calls=1)
+                    )
+                except CallInProgressError:
+                    current = self.calls.get_call(run_id, user_id, invocation.tool_call_id)
+                    return current.result or self._in_progress()
+                except BudgetExceededError as error:
+                    problem = ToolResult.failure(
+                        "BUDGET_EXCEEDED", f"任务预算已耗尽：{error.dimension}。"
+                    )
+            return self.finish(run_id, user_id, invocation, problem, on_finished=on_finished)
+
+        request = self.requests.prepare(
+            run_id,
+            user_id,
+            "tool",
+            invocation.model_dump_json(),
+            self.settings,
+            call_id=invocation.tool_call_id,
+            retry_safe=definition.retry_safe,
+        )
+        while True:
+            if request.retry_at is not None:
+                delay = (request.retry_at - self.calls.runs.now()).total_seconds()
+                if delay > 0:
+                    await self.sleep(delay)
+            try:
+                request = self.requests.start(
+                    request.id, user_id, tool_dimension=definition.budget_dimension
+                )
+            except (RequestInProgressError, CallInProgressError):
+                current = self.calls.get_call(run_id, user_id, invocation.tool_call_id)
+                return current.result or self._in_progress()
+            except BudgetExceededError as error:
+                return self.finish(
+                    run_id,
+                    user_id,
+                    invocation,
+                    ToolResult.failure("BUDGET_EXCEEDED", f"任务预算已耗尽：{error.dimension}。"),
+                    on_finished=on_finished,
+                )
+            failure = None
+            try:
+                remaining = (context.deadline_at - self.calls.runs.now()).total_seconds()
+                result = ToolResult.model_validate(
+                    await asyncio.wait_for(
                         definition.handler(context, parameters),
                         timeout=max(0, min(self.settings.request_timeout_seconds, remaining)),
                     )
-                    problem = ToolResult.model_validate(result)
-                except ToolFailure as error:
-                    problem = error.result
-                except TimeoutError:
-                    problem = ToolResult.failure(
-                        "TOOL_TIMEOUT", "工具请求超时，可稍后重试。", retryable=True
-                    )
-                except PermissionError:
-                    problem = ToolResult.failure("PERMISSION_DENIED", "工具访问超出当前任务权限。")
-                except Exception:
-                    problem = ToolResult.failure(
-                        "INTERNAL_TOOL_ERROR", "工具执行失败，请调整行动。"
-                    )
-        try:
-            problem = self._normalize(problem)
-        except (ValueError, RecursionError):
-            problem = ToolResult.failure("INTERNAL_TOOL_ERROR", "工具结果格式不符合协议。")
-        return self.calls.finish_call(
-            run_id, user_id, invocation.tool_call_id, problem, on_finished=on_finished
-        ).result
+                )
+            except ToolFailure as error:
+                result, failure = error.result, error.info
+            except TimeoutError:
+                result = ToolResult.failure(
+                    "TOOL_TIMEOUT", "工具请求超时，可稍后重试。", retryable=True
+                )
+            except PermissionError:
+                result = ToolResult.failure("PERMISSION_DENIED", "工具访问超出当前任务权限。")
+            except Exception:
+                result = ToolResult.failure("INTERNAL_TOOL_ERROR", "工具执行失败，请调整行动。")
+            try:
+                result = self._normalize(result)
+            except (ValueError, RecursionError):
+                result = ToolResult.failure("INTERNAL_TOOL_ERROR", "工具结果格式不符合协议。")
+            if result.ok:
+                return self.finish(run_id, user_id, invocation, result, on_finished=on_finished)
+            if failure is None or (
+                failure.code != result.error.code and failure.category not in FATAL_CATEGORIES
+            ):
+                failure = FailureInfo(
+                    code=result.error.code,
+                    category="transient" if result.error.retryable else "observation",
+                    retryable=result.error.retryable,
+                )
+            request = self.requests.fail_attempt(
+                request.id, user_id, failure, self.settings, feedback=result
+            )
+            if request.status == "completed":
+                if request.stop_reason == "retry_deadline":
+                    result = ToolResult.failure("BUDGET_EXCEEDED", "重试无法在任务截止时间内完成。")
+                return self.finish(run_id, user_id, invocation, result, on_finished=on_finished)
+            if self.calls.runs.get_run(run_id, user_id).status == RunStatus.WAITING_RETRY:
+                raise RetryDeferredError("tool retry saved for later")

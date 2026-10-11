@@ -1,6 +1,6 @@
 """Versioned SQLite schema, introduced incrementally with implementation steps."""
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA_V1 = (
     """
@@ -117,4 +117,75 @@ SCHEMA_V3 = (
         WHERE role = 'assistant'""",
     """CREATE UNIQUE INDEX missing_submission_once ON run_messages(run_id, purpose)
         WHERE purpose = 'missing_submission'""",
+)
+
+SCHEMA_V4 = (
+    """
+    CREATE TABLE external_requests (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('model', 'tool')),
+        tool_call_id TEXT,
+        payload_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('ready', 'executing', 'waiting', 'completed')),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 3),
+        max_attempts INTEGER NOT NULL CHECK (max_attempts BETWEEN 1 AND 3),
+        retry_base_seconds REAL NOT NULL CHECK (retry_base_seconds > 0),
+        retry_at TEXT,
+        failure_json TEXT,
+        feedback_json TEXT,
+        stop_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (run_id, tool_call_id)
+            REFERENCES tool_calls(run_id, tool_call_id) ON DELETE CASCADE,
+        CHECK ((kind = 'tool') = (tool_call_id IS NOT NULL)),
+        CHECK ((status = 'waiting') = (retry_at IS NOT NULL)),
+        CHECK (attempts <= max_attempts)
+    )
+    """,
+    """CREATE UNIQUE INDEX active_model_request ON external_requests(run_id)
+        WHERE kind = 'model' AND status != 'completed'""",
+    """CREATE UNIQUE INDEX tool_request_once ON external_requests(run_id, tool_call_id)
+        WHERE kind = 'tool'""",
+    "ALTER TABLE model_responses ADD COLUMN request_id TEXT REFERENCES external_requests(id)",
+    "CREATE UNIQUE INDEX response_request_once ON model_responses(request_id)",
+    "ALTER TABLE run_messages RENAME TO run_messages_v3",
+    """
+    CREATE TABLE run_messages (
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        seq INTEGER NOT NULL CHECK (seq > 0),
+        role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant', 'tool')),
+        purpose TEXT CHECK (purpose IN (
+            'initial', 'missing_submission', 'budget_warning', 'repeat_warning', 'retry_notice'
+        )),
+        response_turn INTEGER,
+        tool_call_id TEXT,
+        message_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (run_id, seq),
+        FOREIGN KEY (run_id, response_turn) REFERENCES model_responses(run_id, turn),
+        FOREIGN KEY (run_id, tool_call_id) REFERENCES tool_calls(run_id, tool_call_id),
+        CHECK ((role = 'tool') = (tool_call_id IS NOT NULL)),
+        CHECK (role NOT IN ('assistant', 'tool') OR response_turn IS NOT NULL),
+        CHECK (purpose IS NULL OR role IN ('system', 'user'))
+    )
+    """,
+    "INSERT INTO run_messages SELECT * FROM run_messages_v3",
+    "DROP TABLE run_messages_v3",
+    """CREATE UNIQUE INDEX tool_feedback_once ON run_messages(run_id, tool_call_id)
+        WHERE role = 'tool'""",
+    """CREATE UNIQUE INDEX assistant_response_once ON run_messages(run_id, response_turn)
+        WHERE role = 'assistant'""",
+    """CREATE UNIQUE INDEX missing_submission_once ON run_messages(run_id, purpose)
+        WHERE purpose = 'missing_submission'""",
+    """
+    CREATE TABLE harness_notices (
+        run_id TEXT NOT NULL,
+        notice_key TEXT NOT NULL,
+        message_seq INTEGER NOT NULL,
+        PRIMARY KEY (run_id, notice_key),
+        FOREIGN KEY (run_id, message_seq) REFERENCES run_messages(run_id, seq) ON DELETE CASCADE
+    )
+    """,
 )
