@@ -189,30 +189,35 @@ class RunStore:
         charge = BudgetCharge.model_validate(charge)
         with self.database.transaction() as connection:
             run = _record(self._owned_row(connection, run_id, user_id))
-            at = _now(now)
-            self._check_clock(run, at)
-            if run.status != RunStatus.RUNNING:
-                raise InvalidRunStateError("budget can only be consumed by a running run")
-            if at >= run.deadline_at:
-                raise BudgetExceededError("deadline")
-            usage = run.budget_usage.model_dump()
-            for name, amount in charge.model_dump().items():
-                usage[name] += amount
-                if usage[name] > getattr(run.budget_limits, name):
-                    raise BudgetExceededError(name)
-            connection.execute(
-                """UPDATE runs SET budget_usage_json = ?, updated_at = ?
-                    WHERE id = ? AND user_id = ?""",
-                (BudgetUsage(**usage).model_dump_json(), timestamp(at), run_id, user_id),
-            )
-            self._append_event(
-                connection,
-                run_id,
-                "budget_consumed",
-                at,
-                {"charge": charge.model_dump(), "usage": usage},
-            )
-            return _record(self._owned_row(connection, run_id, user_id))
+            return self._consume_budget(connection, run, charge, _now(now))
+
+    def _consume_budget(
+        self, connection: sqlite3.Connection, run: RunRecord, charge: BudgetCharge, at: datetime
+    ) -> RunRecord:
+        """Shared storage primitive: reserve counters and start a call in one transaction."""
+        self._check_clock(run, at)
+        if run.status != RunStatus.RUNNING:
+            raise InvalidRunStateError("budget can only be consumed by a running run")
+        if at >= run.deadline_at:
+            raise BudgetExceededError("deadline")
+        usage = run.budget_usage.model_dump()
+        for name, amount in charge.model_dump().items():
+            usage[name] += amount
+            if usage[name] > getattr(run.budget_limits, name):
+                raise BudgetExceededError(name)
+        connection.execute(
+            """UPDATE runs SET budget_usage_json = ?, updated_at = ?
+                WHERE id = ? AND user_id = ?""",
+            (BudgetUsage(**usage).model_dump_json(), timestamp(at), run.id, run.user_id),
+        )
+        self._append_event(
+            connection,
+            run.id,
+            "budget_consumed",
+            at,
+            {"charge": charge.model_dump(), "usage": usage},
+        )
+        return _record(self._owned_row(connection, run.id, run.user_id))
 
     def list_events(
         self, run_id: str, user_id: str, *, after_id: int = 0, limit: int = 100

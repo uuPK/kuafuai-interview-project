@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from app.storage.schema import SCHEMA_V1, SCHEMA_VERSION
+from app.storage.schema import SCHEMA_V1, SCHEMA_V2, SCHEMA_VERSION
 
 
 class SchemaVersionError(RuntimeError):
@@ -67,4 +67,8 @@ class Database:
                 if version == 0:
                     for statement in SCHEMA_V1:
                         connection.execute(statement)
-                    connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                    version = 1
+                if version == 1:
+                    for statement in SCHEMA_V2:
+                        connection.execute(statement)
+                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

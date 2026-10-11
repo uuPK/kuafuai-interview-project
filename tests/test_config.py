@@ -98,6 +98,7 @@ def test_whitespace_placeholders_are_missing(field: str) -> None:
         ("max_redirects", -1),
         ("max_download_bytes", 0),
         ("max_tool_result_chars", 0),
+        ("max_tool_result_chars", 255),
         ("max_model_input_chars", 0),
         ("session_ttl_seconds", 0),
         ("app_name", ""),

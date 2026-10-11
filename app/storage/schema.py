@@ -1,6 +1,6 @@
 """Versioned SQLite schema, introduced incrementally with implementation steps."""
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA_V1 = (
     """
@@ -46,4 +46,26 @@ SCHEMA_V1 = (
     )
     """,
     "CREATE INDEX run_events_timeline ON run_events(run_id, id)",
+)
+
+SCHEMA_V2 = (
+    """
+    CREATE TABLE tool_calls (
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        tool_call_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        arguments TEXT NOT NULL,
+        invocation_hash TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'executing', 'completed')),
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        result_json TEXT,
+        PRIMARY KEY (run_id, tool_call_id),
+        CHECK ((status = 'completed') = (result_json IS NOT NULL)),
+        CHECK ((status = 'completed') = (finished_at IS NOT NULL)),
+        CHECK (status != 'executing' OR started_at IS NOT NULL)
+    )
+    """,
+    "CREATE INDEX tool_calls_pending ON tool_calls(run_id, status, created_at)",
 )

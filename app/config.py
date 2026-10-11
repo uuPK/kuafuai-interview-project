@@ -61,7 +61,8 @@ class Settings(BaseSettings):
     max_fetch_calls: int = Field(default=12, ge=1)
     max_tool_calls: int = Field(default=50, ge=1)
     run_timeout_seconds: int = Field(default=600, ge=1)
-    max_tool_result_chars: int = Field(default=12_000, ge=1)
+    # A complete bounded error envelope must fit even at the smallest configured limit.
+    max_tool_result_chars: int = Field(default=12_000, ge=256)
     max_model_input_chars: int = Field(default=120_000, ge=1)
 
     @field_validator("data_dir")
