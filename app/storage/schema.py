@@ -1,6 +1,6 @@
 """Versioned SQLite schema, introduced incrementally with implementation steps."""
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_V1 = (
     """
@@ -68,4 +68,53 @@ SCHEMA_V2 = (
     )
     """,
     "CREATE INDEX tool_calls_pending ON tool_calls(run_id, status, created_at)",
+)
+
+SCHEMA_V3 = (
+    """
+    CREATE TABLE model_responses (
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        turn INTEGER NOT NULL CHECK (turn > 0),
+        response_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (run_id, turn)
+    )
+    """,
+    """
+    CREATE TABLE model_tool_calls (
+        run_id TEXT NOT NULL,
+        turn INTEGER NOT NULL,
+        position INTEGER NOT NULL CHECK (position >= 0),
+        tool_call_id TEXT NOT NULL,
+        PRIMARY KEY (run_id, turn, position),
+        UNIQUE (run_id, tool_call_id),
+        FOREIGN KEY (run_id, turn) REFERENCES model_responses(run_id, turn) ON DELETE CASCADE,
+        FOREIGN KEY (run_id, tool_call_id)
+            REFERENCES tool_calls(run_id, tool_call_id) ON DELETE CASCADE
+    )
+    """,
+    """
+    CREATE TABLE run_messages (
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        seq INTEGER NOT NULL CHECK (seq > 0),
+        role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant', 'tool')),
+        purpose TEXT CHECK (purpose IN ('initial', 'missing_submission')),
+        response_turn INTEGER,
+        tool_call_id TEXT,
+        message_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (run_id, seq),
+        FOREIGN KEY (run_id, response_turn) REFERENCES model_responses(run_id, turn),
+        FOREIGN KEY (run_id, tool_call_id) REFERENCES tool_calls(run_id, tool_call_id),
+        CHECK ((role = 'tool') = (tool_call_id IS NOT NULL)),
+        CHECK (role NOT IN ('assistant', 'tool') OR response_turn IS NOT NULL),
+        CHECK (purpose IS NULL OR role IN ('system', 'user'))
+    )
+    """,
+    """CREATE UNIQUE INDEX tool_feedback_once ON run_messages(run_id, tool_call_id)
+        WHERE role = 'tool'""",
+    """CREATE UNIQUE INDEX assistant_response_once ON run_messages(run_id, response_turn)
+        WHERE role = 'assistant'""",
+    """CREATE UNIQUE INDEX missing_submission_once ON run_messages(run_id, purpose)
+        WHERE purpose = 'missing_submission'""",
 )

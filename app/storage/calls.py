@@ -1,6 +1,7 @@
 """Durable tool calls and compare-and-set execution with atomic budget reservation."""
 
 import sqlite3
+from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum
 
@@ -62,48 +63,56 @@ class CallStore:
     def prepare_calls(
         self, run_id: str, user_id: str, invocations: list[ToolInvocation]
     ) -> list[CallRecord]:
+        with self.database.transaction() as connection:
+            return self._prepare_calls(connection, run_id, user_id, invocations)
+
+    def _prepare_calls(
+        self,
+        connection: sqlite3.Connection,
+        run_id: str,
+        user_id: str,
+        invocations: list[ToolInvocation],
+    ) -> list[CallRecord]:
+        """Share the transaction that saves a full model response and its call list."""
         calls = [ToolInvocation.model_validate(call) for call in invocations]
         if len({call.tool_call_id for call in calls}) != len(calls):
             raise CallConflictError("duplicate tool call IDs in response")
-        with self.database.transaction() as connection:
-            self.runs._owned_row(connection, run_id, user_id)
-            for call in calls:
-                existing = connection.execute(
-                    "SELECT * FROM tool_calls WHERE run_id = ? AND tool_call_id = ?",
-                    (run_id, call.tool_call_id),
-                ).fetchone()
-                if existing is not None:
-                    if existing["invocation_hash"] != call.fingerprint:
-                        raise CallConflictError("tool call ID conflicts with its saved invocation")
-                    continue
-                at = datetime.now(UTC)
-                connection.execute(
-                    """INSERT INTO tool_calls (
-                        run_id, tool_call_id, name, arguments, invocation_hash, status, created_at
-                    ) VALUES (?, ?, ?, ?, ?, 'pending', ?)""",
-                    (
-                        run_id,
-                        call.tool_call_id,
-                        call.name,
-                        call.arguments,
-                        call.fingerprint,
-                        timestamp(at),
-                    ),
-                )
-                self.runs._append_event(
-                    connection,
+        self.runs._owned_row(connection, run_id, user_id)
+        for call in calls:
+            existing = connection.execute(
+                "SELECT * FROM tool_calls WHERE run_id = ? AND tool_call_id = ?",
+                (run_id, call.tool_call_id),
+            ).fetchone()
+            if existing is not None:
+                if existing["invocation_hash"] != call.fingerprint:
+                    raise CallConflictError("tool call ID conflicts with its saved invocation")
+                continue
+            at = datetime.now(UTC)
+            connection.execute(
+                """INSERT INTO tool_calls (
+                    run_id, tool_call_id, name, arguments, invocation_hash, status, created_at
+                ) VALUES (?, ?, ?, ?, ?, 'pending', ?)""",
+                (
                     run_id,
-                    "tool_pending",
-                    at,
-                    {
-                        "tool_call_id": call.tool_call_id,
-                        "name": call.name,
-                        "arguments_chars": len(call.arguments),
-                    },
-                )
-            return [
-                _call_record(self._row(connection, run_id, call.tool_call_id)) for call in calls
-            ]
+                    call.tool_call_id,
+                    call.name,
+                    call.arguments,
+                    call.fingerprint,
+                    timestamp(at),
+                ),
+            )
+            self.runs._append_event(
+                connection,
+                run_id,
+                "tool_pending",
+                at,
+                {
+                    "tool_call_id": call.tool_call_id,
+                    "name": call.name,
+                    "arguments_chars": len(call.arguments),
+                },
+            )
+        return [_call_record(self._row(connection, run_id, call.tool_call_id)) for call in calls]
 
     def get_call(self, run_id: str, user_id: str, call_id: str) -> CallRecord:
         with self.database.connection() as connection:
@@ -138,7 +147,13 @@ class CallStore:
             return _call_record(self._row(connection, run_id, call_id))
 
     def finish_call(
-        self, run_id: str, user_id: str, call_id: str, result: ToolResult
+        self,
+        run_id: str,
+        user_id: str,
+        call_id: str,
+        result: ToolResult,
+        *,
+        on_finished: Callable[[sqlite3.Connection, CallRecord], None] | None = None,
     ) -> CallRecord:
         result = ToolResult.model_validate(result)
         with self.database.transaction() as connection:
@@ -169,4 +184,7 @@ class CallStore:
                     "result_chars": len(result.model_dump_json()),
                 },
             )
-            return _call_record(self._row(connection, run_id, call_id))
+            completed = _call_record(self._row(connection, run_id, call_id))
+            if on_finished is not None:
+                on_finished(connection, completed)
+            return completed

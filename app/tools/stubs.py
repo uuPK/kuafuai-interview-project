@@ -7,7 +7,7 @@ from pydantic import Field
 
 from app.tools.context import ToolContext
 from app.tools.models import ToolFailure, ToolParameters, ToolResult
-from app.tools.registry import ToolDefinition, ToolRegistry
+from app.tools.registry import CompletionStatus, ToolDefinition, ToolRegistry
 
 
 class SearchParameters(ToolParameters):
@@ -19,6 +19,42 @@ class SearchParameters(ToolParameters):
 
 class FetchParameters(ToolParameters):
     candidate_id: str = Field(min_length=1, max_length=100)
+
+
+class FixtureDraft(ToolParameters):
+    title: str = Field(min_length=1, max_length=100)
+    items: tuple[str, ...] = Field(default=(), max_length=5)
+
+
+class SubmitFixtureParameters(ToolParameters):
+    draft: FixtureDraft
+
+
+async def submit_fixture(context: ToolContext, parameters: SubmitFixtureParameters) -> ToolResult:
+    if parameters.draft.title == "simulate_rejection":
+        raise ToolFailure("BRIEF_REJECTED", "替身检查发现问题，请修改测试稿件后提交。")
+    return ToolResult.success(
+        {"fixture": True, "accepted": True, "draft": parameters.draft.model_dump(mode="json")}
+    )
+
+
+def fixture_completion(result: ToolResult) -> CompletionStatus | None:
+    if result.ok and isinstance(result.data, dict) and result.data.get("accepted") is True:
+        return "completed"
+    return None
+
+
+def register_submission_fixture(registry: ToolRegistry) -> None:
+    """Explicit opt-in: this submission fixture performs no real news quality checks."""
+    registry.register(
+        ToolDefinition(
+            name="submit_brief",
+            description="离线提交替身，只保存测试稿件并结束测试任务；不执行正式新闻质量检查。",
+            parameters=SubmitFixtureParameters,
+            handler=submit_fixture,
+            completion_status=fixture_completion,
+        )
+    )
 
 
 async def search_fixture(context: ToolContext, parameters: SearchParameters) -> ToolResult:

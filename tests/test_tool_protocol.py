@@ -92,6 +92,29 @@ def test_registration_rejects_sync_handler_and_bad_metadata() -> None:
     assert ToolRegistry().schemas() == []
 
 
+@pytest.mark.parametrize("async_resolver", [True, False])
+def test_completion_resolver_is_trusted_synchronous_metadata(async_resolver) -> None:
+    async def resolver(result):
+        return "completed"
+
+    with pytest.raises(ValueError, match="synchronous"):
+        ToolDefinition(
+            "sample",
+            "测试工具",
+            SearchParameters,
+            search_fixture,
+            completion_status=resolver if async_resolver else "completed",
+        )
+    definition = ToolDefinition(
+        "sample",
+        "测试工具",
+        SearchParameters,
+        search_fixture,
+        completion_status=lambda result: "no_news",
+    )
+    assert "completion_status" not in str(definition.schema())
+
+
 def test_context_is_server_bound_and_resolves_task_paths(tool_env) -> None:
     context = bind_context(tool_env.runs, tool_env.settings.data_dir, tool_env.run.id, "user-1")
     assert context.user_id == "user-1"

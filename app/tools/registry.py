@@ -12,6 +12,8 @@ from app.tools.models import ToolName, ToolParameters, ToolResult
 
 RESERVED_FIELDS = {"user_id", "run_id", "recipient", "working_dir", "settings", "api_key"}
 Handler = Callable[[ToolContext, ToolParameters], Awaitable[ToolResult]]
+CompletionStatus = Literal["completed", "no_news"]
+CompletionResolver = Callable[[ToolResult], CompletionStatus | None]
 
 
 class ToolMetadata(ToolParameters):
@@ -27,6 +29,7 @@ class ToolDefinition:
     parameters: type[ToolParameters]
     handler: Handler
     budget_dimension: Literal["tool_calls", "searches", "fetches"] = "tool_calls"
+    completion_status: CompletionResolver | None = None
 
     def __post_init__(self) -> None:
         ToolMetadata(
@@ -45,6 +48,11 @@ class ToolDefinition:
             raise ValueError("tool parameters cannot contain server-bound fields")
         if not inspect.iscoroutinefunction(self.handler):
             raise ValueError("tool handler must be asynchronous")
+        if self.completion_status is not None and (
+            not callable(self.completion_status)
+            or inspect.iscoroutinefunction(self.completion_status)
+        ):
+            raise ValueError("completion resolver must be synchronous and callable")
 
     def schema(self) -> dict:
         return {

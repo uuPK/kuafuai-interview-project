@@ -3,12 +3,20 @@
 import asyncio
 import json
 import re
+import sqlite3
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from pydantic import ValidationError
 
 from app.config import Settings
-from app.storage.calls import CallConflictError, CallInProgressError, CallStatus, CallStore
+from app.storage.calls import (
+    CallConflictError,
+    CallInProgressError,
+    CallRecord,
+    CallStatus,
+    CallStore,
+)
 from app.storage.models import BudgetCharge, RunStatus
 from app.storage.runs import BudgetExceededError, InvalidRunStateError, RunNotFoundError
 from app.tools.context import bind_context
@@ -106,7 +114,14 @@ class ToolExecutor:
             "INVALID_ARGUMENTS", "参数不符合工具 schema，请检查字段与类型。", details=issues
         )
 
-    async def execute(self, run_id: str, user_id: str, invocation: ToolInvocation) -> ToolResult:
+    async def execute(
+        self,
+        run_id: str,
+        user_id: str,
+        invocation: ToolInvocation,
+        *,
+        on_finished: Callable[[sqlite3.Connection, CallRecord], None] | None = None,
+    ) -> ToolResult:
         invocation = ToolInvocation.model_validate(invocation)
         try:
             record = self.calls.prepare_calls(run_id, user_id, [invocation])[0]
@@ -184,4 +199,6 @@ class ToolExecutor:
             problem = self._normalize(problem)
         except (ValueError, RecursionError):
             problem = ToolResult.failure("INTERNAL_TOOL_ERROR", "工具结果格式不符合协议。")
-        return self.calls.finish_call(run_id, user_id, invocation.tool_call_id, problem).result
+        return self.calls.finish_call(
+            run_id, user_id, invocation.tool_call_id, problem, on_finished=on_finished
+        ).result

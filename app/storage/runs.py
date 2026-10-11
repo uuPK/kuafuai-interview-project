@@ -135,52 +135,57 @@ class RunStore:
         change = StateChange.model_validate(change)
         with self.database.transaction() as connection:
             run = _record(self._owned_row(connection, run_id, user_id))
-            at = _now(now)
-            self._check_clock(run, at)
-            if change.status not in TRANSITIONS[run.status]:
-                raise InvalidRunStateError(f"cannot change {run.status} to {change.status}")
-            if (
-                run.deadline_at is not None
-                and change.status in {RunStatus.RUNNING, RunStatus.COMPLETED, RunStatus.NO_NEWS}
-                and at >= run.deadline_at
-            ):
-                raise BudgetExceededError("deadline")
-            started, deadline = run.started_at, run.deadline_at
-            if change.status == RunStatus.RUNNING:
-                if run.retry_at is not None and at < run.retry_at:
-                    raise InvalidRunStateError("retry is not due yet")
-                if started is None:
-                    started = at
-                    deadline = at + timedelta(seconds=run.budget_limits.timeout_seconds)
-            if change.retry_at is not None and change.retry_at <= at:
-                raise ValueError("retry_at must be in the future")
-            connection.execute(
-                """UPDATE runs SET status = ?, updated_at = ?, started_at = ?, deadline_at = ?,
-                    retry_at = ?, stop_reason = ? WHERE id = ? AND user_id = ?""",
-                (
-                    change.status,
-                    timestamp(at),
-                    timestamp(started) if started is not None else None,
-                    timestamp(deadline) if deadline is not None else None,
-                    timestamp(change.retry_at) if change.retry_at is not None else None,
-                    change.stop_reason,
-                    run_id,
-                    user_id,
-                ),
-            )
-            self._append_event(
-                connection,
-                run_id,
-                "state_changed",
-                at,
-                {
-                    "from": run.status,
-                    "to": change.status,
-                    "stop_reason": change.stop_reason,
-                    "retry_at": timestamp(change.retry_at) if change.retry_at is not None else None,
-                },
-            )
-            return _record(self._owned_row(connection, run_id, user_id))
+            return self._transition(connection, run, change, _now(now))
+
+    def _transition(
+        self, connection: sqlite3.Connection, run: RunRecord, change: StateChange, at: datetime
+    ) -> RunRecord:
+        """Coordinate a terminal state with its submission result and tool feedback."""
+        self._check_clock(run, at)
+        if change.status not in TRANSITIONS[run.status]:
+            raise InvalidRunStateError(f"cannot change {run.status} to {change.status}")
+        if (
+            run.deadline_at is not None
+            and change.status in {RunStatus.RUNNING, RunStatus.COMPLETED, RunStatus.NO_NEWS}
+            and at >= run.deadline_at
+        ):
+            raise BudgetExceededError("deadline")
+        started, deadline = run.started_at, run.deadline_at
+        if change.status == RunStatus.RUNNING:
+            if run.retry_at is not None and at < run.retry_at:
+                raise InvalidRunStateError("retry is not due yet")
+            if started is None:
+                started = at
+                deadline = at + timedelta(seconds=run.budget_limits.timeout_seconds)
+        if change.retry_at is not None and change.retry_at <= at:
+            raise ValueError("retry_at must be in the future")
+        connection.execute(
+            """UPDATE runs SET status = ?, updated_at = ?, started_at = ?, deadline_at = ?,
+                retry_at = ?, stop_reason = ? WHERE id = ? AND user_id = ?""",
+            (
+                change.status,
+                timestamp(at),
+                timestamp(started) if started is not None else None,
+                timestamp(deadline) if deadline is not None else None,
+                timestamp(change.retry_at) if change.retry_at is not None else None,
+                change.stop_reason,
+                run.id,
+                run.user_id,
+            ),
+        )
+        self._append_event(
+            connection,
+            run.id,
+            "state_changed",
+            at,
+            {
+                "from": run.status,
+                "to": change.status,
+                "stop_reason": change.stop_reason,
+                "retry_at": timestamp(change.retry_at) if change.retry_at is not None else None,
+            },
+        )
+        return _record(self._owned_row(connection, run.id, run.user_id))
 
     def consume_budget(
         self, run_id: str, user_id: str, charge: BudgetCharge, *, now: datetime | None = None

@@ -19,7 +19,7 @@ def test_initialize_is_idempotent_and_connections_are_configured(tmp_path: Path)
         assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 1234
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert connection.execute("PRAGMA synchronous").fetchone()[0] == 2
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
         assert {
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
