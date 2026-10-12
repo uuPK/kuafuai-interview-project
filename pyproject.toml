@@ -9,6 +9,7 @@ description = "A preference-driven daily AI news research assistant."
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115,<1",
+    "httpx>=0.28,<1",
     "pydantic>=2.10,<3",
     "pydantic-settings>=2.7,<3",
     "uvicorn>=0.34,<1",
@@ -16,7 +17,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "httpx>=0.28,<1",
     "httpx2>=2.13,<3",
     "pytest>=8.3,<10",
     "pytest-cov>=6,<8",

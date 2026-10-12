@@ -12,11 +12,18 @@ FailureCategory = Literal[
 FATAL_CATEGORIES = {"authentication", "quota", "configuration", "protocol"}
 
 
+class FailureDiagnostics(ToolParameters):
+    http_status: int | None = Field(default=None, ge=100, le=599)
+    provider_request_id: str | None = Field(default=None, max_length=200, repr=False)
+    summary: str | None = Field(default=None, max_length=500, repr=False)
+
+
 class FailureInfo(ToolParameters):
     code: str = Field(pattern=r"^[A-Z][A-Z0-9_]{0,79}$")
     category: FailureCategory = "observation"
     retryable: bool = False
     retry_after: str | None = Field(default=None, max_length=200, repr=False)
+    diagnostics: FailureDiagnostics | None = Field(default=None, repr=False)
 
     @model_validator(mode="after")
     def fatal_failures_do_not_retry(self):

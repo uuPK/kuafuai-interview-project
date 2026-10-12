@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     deepseek_api_key: SecretStr | None = Field(default=None, repr=False, exclude=True)
     deepseek_model: str | None = Field(default=None, min_length=1, max_length=200)
     deepseek_thinking_enabled: bool = False
+    deepseek_reasoning_effort: Literal["low", "high", "max"] = "high"
     deepseek_temperature: float = Field(default=0.2, ge=0, le=2, allow_inf_nan=False)
     deepseek_max_tokens: int = Field(default=4096, ge=1)
 
@@ -65,6 +66,7 @@ class Settings(BaseSettings):
     # A complete bounded error envelope must fit even at the smallest configured limit.
     max_tool_result_chars: int = Field(default=12_000, ge=256)
     max_model_input_chars: int = Field(default=120_000, ge=1)
+    max_model_response_bytes: int = Field(default=2_000_000, ge=256)
 
     @field_validator("data_dir")
     @classmethod

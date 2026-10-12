@@ -4,7 +4,7 @@ from typing import Annotated, Literal, Protocol, Self
 
 from pydantic import Field, JsonValue, TypeAdapter, model_validator
 
-from app.harness.failures import FailureInfo
+from app.harness.failures import FailureDiagnostics, FailureInfo
 from app.tools.models import CallId, ToolInvocation, ToolName, ToolParameters
 
 
@@ -55,6 +55,7 @@ MESSAGE_ADAPTER = TypeAdapter(Message)
 class ModelResponse(ToolParameters):
     message: AssistantMessage
     response_id: str | None = Field(default=None, max_length=200, repr=False)
+    provider_request_id: str | None = Field(default=None, max_length=200, repr=False)
     finish_reason: str = Field(default="stop", max_length=80)
     usage: dict[str, JsonValue] = Field(default_factory=dict, repr=False)
     raw: dict[str, JsonValue] = Field(default_factory=dict, repr=False)
@@ -112,12 +113,14 @@ class ModelFailure(Exception):
         retryable: bool = False,
         retry_after: str | None = None,
         category: str | None = None,
+        diagnostics: FailureDiagnostics | None = None,
     ) -> None:
         self.info = FailureInfo(
             code=code,
             retryable=retryable,
             retry_after=retry_after,
             category=category or ("transient" if retryable else "observation"),
+            diagnostics=diagnostics,
         )
         self.code = self.info.code
         self.retryable = self.info.retryable

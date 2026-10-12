@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import re
 import sqlite3
 from collections.abc import Callable
 
@@ -16,6 +15,7 @@ from app.harness.failures import (
     RetryDeferredError,
 )
 from app.harness.guardrails import GuardrailStore
+from app.harness.redaction import Redactor
 from app.storage.calls import (
     CallConflictError,
     CallInProgressError,
@@ -29,8 +29,6 @@ from app.storage.runs import BudgetExceededError, RunNotFoundError
 from app.tools.context import bind_context
 from app.tools.models import ArgumentIssue, ToolFailure, ToolInvocation, ToolParameters, ToolResult
 from app.tools.registry import ToolDefinition, ToolRegistry
-
-SENSITIVE_KEYS = {"apikey", "password", "secret", "token", "authorization", "cookie", "setcookie"}
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict:
@@ -56,42 +54,14 @@ class ToolExecutor:
         self.requests = RequestStore(calls)
         self.guards = GuardrailStore(calls.runs)
         self.sleep = sleep
-        self._secrets = tuple(
-            value.get_secret_value()
-            for name in (
-                "deepseek_api_key",
-                "bocha_api_key",
-                "smtp_username",
-                "smtp_password",
-                "session_secret",
-            )
-            if (value := getattr(settings, name)) is not None
-        )
-
-    def _redact(self, value):
-        if isinstance(value, str):
-            for secret in self._secrets:
-                value = value.replace(secret, "[REDACTED]")
-            return re.sub(
-                r"(?im)\b(authorization|set-cookie|cookie)\s*[:=][^\r\n]+",
-                r"\1: [REDACTED]",
-                value,
-            )
-        if isinstance(value, list):
-            return [self._redact(item) for item in value]
-        if isinstance(value, dict):
-            return {
-                self._redact(key): "[REDACTED]"
-                if re.sub(r"[^a-z]", "", key.lower()) in SENSITIVE_KEYS
-                else self._redact(item)
-                for key, item in value.items()
-            }
-        return value
+        self.redactor = Redactor(settings)
 
     def _normalize(self, result: ToolResult) -> ToolResult:
         result = ToolResult.model_validate_json(
             json.dumps(
-                self._redact(result.model_dump(mode="json")), ensure_ascii=False, allow_nan=False
+                self.redactor.clean(result.model_dump(mode="json")),
+                ensure_ascii=False,
+                allow_nan=False,
             )
         )
         if len(result.model_dump_json()) > self.settings.max_tool_result_chars:
