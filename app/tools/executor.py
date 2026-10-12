@@ -174,7 +174,13 @@ class ToolExecutor:
         else:
             try:
                 parameters = self._arguments(definition, invocation)
-                context = bind_context(self.calls.runs, self.settings.data_dir, run_id, user_id)
+                context = bind_context(
+                    self.calls.runs,
+                    self.settings.data_dir,
+                    run_id,
+                    user_id,
+                    tool_call_id=invocation.tool_call_id,
+                )
             except (ValidationError, ValueError, RecursionError) as error:
                 problem = self._argument_error(definition, error)
             except (PermissionError, RunNotFoundError):

@@ -1,6 +1,6 @@
 """Versioned SQLite schema, introduced incrementally with implementation steps."""
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA_V1 = (
     """
@@ -188,4 +188,34 @@ SCHEMA_V4 = (
         FOREIGN KEY (run_id, message_seq) REFERENCES run_messages(run_id, seq) ON DELETE CASCADE
     )
     """,
+)
+
+SCHEMA_V5 = (
+    """
+    CREATE TABLE discoveries (
+        run_id TEXT NOT NULL,
+        tool_call_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        provider_request_id TEXT,
+        raw_json TEXT NOT NULL,
+        result_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (run_id, tool_call_id),
+        FOREIGN KEY (run_id, tool_call_id)
+            REFERENCES tool_calls(run_id, tool_call_id) ON DELETE CASCADE
+    )
+    """,
+    """
+    CREATE TABLE candidates (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        tool_call_id TEXT NOT NULL,
+        position INTEGER NOT NULL CHECK (position >= 0),
+        material_json TEXT NOT NULL,
+        UNIQUE (run_id, tool_call_id, position),
+        FOREIGN KEY (run_id, tool_call_id)
+            REFERENCES discoveries(run_id, tool_call_id) ON DELETE CASCADE
+    )
+    """,
+    "CREATE INDEX candidates_run ON candidates(run_id, id)",
 )

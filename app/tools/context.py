@@ -16,6 +16,7 @@ class ToolContext:
     window_start: datetime
     window_end: datetime
     deadline_at: datetime | None
+    tool_call_id: str | None = None
 
     def resolve_path(self, path: str, *, write: bool = False) -> Path:
         """Resolve task-relative paths; writes are restricted to scratch, including symlinks."""
@@ -32,7 +33,9 @@ class ToolContext:
         return target
 
 
-def bind_context(runs: RunStore, data_dir: Path, run_id: str, user_id: str) -> ToolContext:
+def bind_context(
+    runs: RunStore, data_dir: Path, run_id: str, user_id: str, *, tool_call_id: str | None = None
+) -> ToolContext:
     run = runs.get_run(run_id, user_id)
     data_root = data_dir.resolve()
     base = data_root / "runs"
@@ -47,4 +50,5 @@ def bind_context(runs: RunStore, data_dir: Path, run_id: str, user_id: str) -> T
         window_start=run.window_start,
         window_end=run.window_end,
         deadline_at=run.deadline_at,
+        tool_call_id=tool_call_id,
     )

@@ -7,7 +7,7 @@ import pytest
 
 import app.storage.database as database_module
 from app.storage.database import Database, SchemaVersionError
-from app.storage.schema import SCHEMA_V1, SCHEMA_V2, SCHEMA_V3
+from app.storage.schema import SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_VERSION
 
 
 def test_initialize_is_idempotent_and_connections_are_configured(tmp_path: Path) -> None:
@@ -20,7 +20,7 @@ def test_initialize_is_idempotent_and_connections_are_configured(tmp_path: Path)
         assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 1234
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert connection.execute("PRAGMA synchronous").fetchone()[0] == 2
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert {
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
@@ -160,7 +160,7 @@ def test_v4_upgrade_preserves_full_v3_conversation(tmp_path, tool_env, response_
     assert calls.get_call(run.id, "user-1", "saved").result == result
     assert runs.get_run(run.id, "user-1").deadline_at == run.deadline_at
     with database.connection() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert connection.execute("SELECT request_id FROM model_responses").fetchone()[0] is None
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 

@@ -10,7 +10,15 @@ from pydantic import Field
 from app.tools.context import ToolContext
 from app.tools.models import ToolName, ToolParameters, ToolResult
 
-RESERVED_FIELDS = {"user_id", "run_id", "recipient", "working_dir", "settings", "api_key"}
+RESERVED_FIELDS = {
+    "user_id",
+    "run_id",
+    "tool_call_id",
+    "recipient",
+    "working_dir",
+    "settings",
+    "api_key",
+}
 Handler = Callable[[ToolContext, ToolParameters], Awaitable[ToolResult]]
 CompletionStatus = Literal["completed", "no_news"]
 CompletionResolver = Callable[[ToolResult], CompletionStatus | None]

@@ -84,6 +84,7 @@ class ToolFailure(Exception):
         retryable: bool = False,
         retry_after: str | None = None,
         category: str | None = None,
+        diagnostics=None,
     ) -> None:
         from app.harness.failures import FailureInfo
 
@@ -92,6 +93,7 @@ class ToolFailure(Exception):
             retryable=retryable,
             retry_after=retry_after,
             category=category or ("transient" if retryable else "observation"),
+            diagnostics=diagnostics,
         )
         self.result = ToolResult.failure(code, message, retryable=self.info.retryable)
         super().__init__(code)

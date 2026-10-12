@@ -1,0 +1,52 @@
+{
+  "code": 200,
+  "log_id": "fixture-live-bocha-request",
+  "msg": null,
+  "data": {
+    "_type": "SearchResponse",
+    "queryContext": {
+      "originalQuery": "AI 模型 开源 发布"
+    },
+    "webPages": {
+      "webSearchUrl": "https://bochaai.com/search?q=AI 模型 开源 发布",
+      "totalEstimatedMatches": 177529,
+      "value": [
+        {
+          "id": "https://api.bochaai.com/v1/#WebPages.0",
+          "name": "晶泰科技:开源化学反应产率定量AI模型 _ 东方财富网",
+          "url": "https://finance.eastmoney.com/a/202610123892177165.html",
+          "displayUrl": "https://finance.eastmoney.com/a/202610123892177165.html",
+          "snippet": "10月12日,据晶泰科技消息,晶泰科技近日在GitHub正式开源化学反应产率定量AI模型lcms2yield,同步开放模型权重、推理代码及训练、评测数据集,面向全球科研社区提供可复现、可调用、可扩展的",
+          "summary": "10月12日,据晶泰科技消息,晶泰科技近日在GitHub正式开源化学反应产率定量AI模型lcms2yield,同步开放模型权重、推理代码及训练、评测数据集,面向全球科研社区提供可复现、可调用、可扩展的AI化学分析工具。(文章来源:界面新闻)",
+          "siteName": "东方财富网财经频道",
+          "siteIcon": "https://th.bochaai.com/favicon?domain_url=https://finance.eastmoney.com/a/202610123892177165.html",
+          "datePublished": "2026-10-12T00:00:00+08:00",
+          "dateLastCrawled": "2026-10-12T00:00:00Z",
+          "cachedPageUrl": null,
+          "language": null,
+          "isFamilyFriendly": null,
+          "isNavigational": null
+        },
+        {
+          "id": "https://api.bochaai.com/v1/#WebPages.1",
+          "name": "黄仁勋:中国AI模型表现足够优秀,开源提升AI效率 - 今日头条",
+          "url": "https://www.toutiao.com/article/7695695051539759625/",
+          "displayUrl": "https://www.toutiao.com/article/7695695051539759625/",
+          "snippet": "来源:市场资讯(来源:财闻)10月12日,在星展银行周一举办的一场论坛上,黄仁勋表示,中国AI模型(包括DeepSeek、Kimi和GLM)的表现“已经足够优秀”。他说:“我是开源的坚定支持者,这是推",
+          "summary": "来源:市场资讯(来源:财闻)10月12日,在星展银行周一举办的一场论坛上,黄仁勋表示,中国AI模型(包括DeepSeek、Kimi和GLM)的表现“已经足够优秀”。他说:“我是开源的坚定支持者,这是推动效率提升的极佳方式。”他补充称,市场将决定哪些模型最适合不同应用场景。黄仁勋还表示,量子计算可能在",
+          "siteName": "今日头条",
+          "siteIcon": "https://th.bochaai.com/favicon?domain_url=https://www.toutiao.com/article/7695695051539759625/",
+          "datePublished": "2026-10-12T16:27:00+08:00",
+          "dateLastCrawled": "2026-10-12T16:27:00Z",
+          "cachedPageUrl": null,
+          "language": null,
+          "isFamilyFriendly": null,
+          "isNavigational": null
+        }
+      ],
+      "someResultsRemoved": true
+    },
+    "images": null,
+    "videos": null
+  }
+}

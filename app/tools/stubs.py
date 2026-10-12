@@ -1,20 +1,13 @@
 """Read-only offline search/fetch fixtures, explicitly marked in every result."""
 
 from datetime import timedelta
-from typing import Literal
 
 from pydantic import Field
 
 from app.tools.context import ToolContext
+from app.tools.discovery import SearchParameters
 from app.tools.models import ToolFailure, ToolParameters, ToolResult
 from app.tools.registry import CompletionStatus, ToolDefinition, ToolRegistry
-
-
-class SearchParameters(ToolParameters):
-    query: str = Field(min_length=1, max_length=300)
-    language: Literal["zh", "en"] = "zh"
-    domains: tuple[str, ...] = Field(default=(), max_length=10)
-    limit: int = Field(default=5, ge=1, le=10)
 
 
 class FetchParameters(ToolParameters):
