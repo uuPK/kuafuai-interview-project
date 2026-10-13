@@ -1,6 +1,6 @@
 """Versioned SQLite schema, introduced incrementally with implementation steps."""
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 SCHEMA_V1 = (
     """
@@ -287,5 +287,19 @@ SCHEMA_V9 = (
         created_at TEXT NOT NULL,
         review_basis TEXT NOT NULL CHECK(review_basis IN ('fixture','independent')),
         document_json TEXT NOT NULL
+    )""",
+)
+
+SCHEMA_V10 = (
+    """CREATE TABLE brief_reviews (
+        run_id TEXT NOT NULL,
+        tool_call_id TEXT NOT NULL,
+        invocation_hash TEXT NOT NULL,
+        input_hash TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        response_json TEXT,
+        PRIMARY KEY (run_id, tool_call_id),
+        FOREIGN KEY (run_id, tool_call_id)
+            REFERENCES tool_calls(run_id, tool_call_id) ON DELETE CASCADE
     )""",
 )

@@ -203,6 +203,7 @@ class RequestStore:
         *,
         feedback: ToolResult | None = None,
         failure_stop_reason: str | None = None,
+        reserve_model_requests: int = 0,
     ) -> RequestRecord:
         failure = FailureInfo.model_validate(failure)
         with self.database.transaction() as connection:
@@ -223,14 +224,16 @@ class RequestStore:
                     reason = "retry_deadline"
                 elif (
                     request.kind == "model"
-                    and run.budget_usage.model_requests >= run.budget_limits.model_requests
+                    and run.budget_usage.model_requests
+                    >= run.budget_limits.model_requests - reserve_model_requests
                 ):
                     reason = "model_budget"
                 else:
                     status, retry_at = "waiting", at + timedelta(seconds=delay)
                     if (
                         request.kind == "model"
-                        and run.budget_limits.model_requests - run.budget_usage.model_requests == 1
+                        and run.budget_limits.model_requests - run.budget_usage.model_requests
+                        == 1 + reserve_model_requests
                     ):
                         reason = "decision_reserved"
                     if delay > settings.retry_inline_max_seconds:

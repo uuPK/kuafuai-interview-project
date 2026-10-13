@@ -113,6 +113,13 @@ class AgentRunner:
         saved = self.requests.active_model(run_id, user_id)
         if saved is not None and saved.status == "executing":
             raise RecoveryRequiredError("executing model request needs recovery")
+        run = self.runs.get_run(run_id, user_id)
+        reserve = self.executor.registry.submission_model_reserve
+        if run.budget_limits.model_requests - run.budget_usage.model_requests <= reserve:
+            if saved is not None:
+                self.requests.abandon(saved.id, user_id)
+            self._fail(run_id, user_id, "budget_model_requests")
+            return None
         if saved is None:
             self.conversations.flush_notices(run_id, user_id, self.settings.request_timeout_seconds)
             request = ModelRequest(
@@ -179,7 +186,12 @@ class AgentRunner:
             except Exception:
                 failure, reason = FailureInfo(code="MODEL_INTERNAL_ERROR"), "model_internal_error"
             saved = self.requests.fail_attempt(
-                saved.id, user_id, failure, self.settings, failure_stop_reason=reason
+                saved.id,
+                user_id,
+                failure,
+                self.settings,
+                failure_stop_reason=reason,
+                reserve_model_requests=reserve,
             )
             if saved.status == "completed":
                 return None

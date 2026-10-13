@@ -174,6 +174,7 @@ class ToolExecutor:
                 user_id,
                 invocation,
                 is_submission=definition is not None and definition.completion_status is not None,
+                reserved_model_requests=self.registry.submission_model_reserve,
             )
             if guard is not None:
                 return self.finish(run_id, user_id, invocation, guard, on_finished=on_finished)

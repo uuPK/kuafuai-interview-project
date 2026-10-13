@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     max_tool_result_chars: int = Field(default=12_000, ge=256)
     max_model_input_chars: int = Field(default=120_000, ge=1)
     max_model_response_bytes: int = Field(default=2_000_000, ge=256)
+    max_review_context_chars: int = Field(default=8000, ge=256, le=50_000)
     max_material_file_bytes: int = Field(default=16_100_000, ge=1)
     max_material_scan_bytes: int = Field(default=32_200_000, ge=1)
     max_material_files: int = Field(default=200, ge=1, le=2000)

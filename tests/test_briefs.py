@@ -559,6 +559,8 @@ def test_permission_sensitive_content_and_small_feedback(brief_env):
 def test_v9_migration_rolls_back_and_is_idempotent(tmp_path, monkeypatch):
     db = Database(tmp_path / "migration.sqlite3")
     schema = database_module.SCHEMA_V9
+    review_schema = database_module.SCHEMA_V10
+    monkeypatch.setattr(database_module, "SCHEMA_V10", ())
     monkeypatch.setattr(database_module, "SCHEMA_V9", ())
     db.initialize()
     with db.connection() as connection:
@@ -572,10 +574,14 @@ def test_v9_migration_rolls_back_and_is_idempotent(tmp_path, monkeypatch):
             "SELECT name FROM sqlite_master WHERE name='briefs'"
         ).fetchone()
     monkeypatch.setattr(database_module, "SCHEMA_V9", schema)
+    monkeypatch.setattr(database_module, "SCHEMA_V10", review_schema)
     db.initialize()
     db.initialize()
     with db.connection() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert (
+            connection.execute("PRAGMA user_version").fetchone()[0]
+            == database_module.SCHEMA_VERSION
+        )
         assert not connection.execute("PRAGMA foreign_key_check").fetchall()
 
 
@@ -616,7 +622,7 @@ def test_review_rejection_is_feedback_and_not_a_saved_brief(brief_env):
     register_submission(registry, ready.store, reviewer=rejected, review_basis="fixture")
     ready.executor = ToolExecutor(registry, env.calls, env.settings)
     result = execute(ready)
-    assert result.error.code == "BRIEF_RULES_REJECTED" and result.error.details[0].issue.endswith(
+    assert result.error.code == "BRIEF_REVIEW_REJECTED" and result.error.details[0].issue.endswith(
         "条件"
     )
     assert counts(ready) == (0, 0, 0)
@@ -774,6 +780,7 @@ def test_v9_upgrade_preserves_sources_history_and_progress(brief_env):
                 env.run.updated_at.isoformat(),
             ),
         )
+        connection.execute("DROP TABLE brief_reviews")
         connection.execute("DROP TABLE briefs")
         connection.execute("DROP TABLE submission_jobs")
         connection.execute("PRAGMA user_version=8")

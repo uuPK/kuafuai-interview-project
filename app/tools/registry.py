@@ -42,6 +42,7 @@ class ToolDefinition:
     completion_status: CompletionResolver | None = None
     retry_safe: bool = False
     on_completed: ResultHook | None = None
+    reserve_model_requests: int = 0
 
     def __post_init__(self) -> None:
         ToolMetadata(
@@ -67,6 +68,11 @@ class ToolDefinition:
             raise ValueError("completion resolver must be synchronous and callable")
         if not isinstance(self.retry_safe, bool):
             raise ValueError("retry safety must be an explicit server-side boolean")
+        if (
+            type(self.reserve_model_requests) is not int
+            or not 0 <= self.reserve_model_requests <= 1
+        ):
+            raise ValueError("submission model reserve must be zero or one")
         if self.on_completed is not None and (
             not callable(self.on_completed) or inspect.iscoroutinefunction(self.on_completed)
         ):
@@ -98,3 +104,14 @@ class ToolRegistry:
 
     def schemas(self) -> list[dict]:
         return [definition.schema() for definition in self._definitions.values()]
+
+    @property
+    def submission_model_reserve(self) -> int:
+        return max(
+            (
+                definition.reserve_model_requests
+                for definition in self._definitions.values()
+                if definition.completion_status is not None
+            ),
+            default=0,
+        )

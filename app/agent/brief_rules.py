@@ -100,9 +100,28 @@ class BriefRules:
                     issue(field, "引用范围须为正文内非空字符区间[start_offset,end_offset)")
                     continue
                 if body[citation.start_offset : citation.end_offset] != citation.quote:
+                    actual = body[citation.start_offset : citation.end_offset]
+                    mismatch = next(
+                        (
+                            position
+                            for position, (left, right) in enumerate(
+                                zip(citation.quote, actual, strict=False)
+                            )
+                            if left != right
+                        ),
+                        min(len(citation.quote), len(actual)),
+                    )
+                    expected_char = (
+                        repr(citation.quote[mismatch]) if mismatch < len(citation.quote) else "结束"
+                    )
+                    actual_char = repr(actual[mismatch]) if mismatch < len(actual) else "结束"
                     issue(
                         field + ".quote",
-                        "摘录与固定正文切片不一致（含空格/换行），重新读取并同步位置",
+                        (
+                            f"字符{citation.start_offset + mismatch}：quote为{expected_char}，"
+                            f"正文为{actual_char}；"
+                            "用完整quote定位并更新起止范围，勿复用旧位置"
+                        )[:80],
                     )
                     continue
                 key = (meta.source_id, citation.start_offset, citation.end_offset)
@@ -140,15 +159,15 @@ class BriefRules:
         document = BriefDocument(**{**draft.model_dump(), "items": tuple(published)})
         return CheckedBrief(document, tuple(meta for meta, _ in loaded.values()), hints), None
 
-    def rejection(self, problems):
+    def rejection(self, problems, *, code="BRIEF_RULES_REJECTED"):
         details = tuple(problems[:10])
         result = ToolResult.failure(
-            "BRIEF_RULES_REJECTED", "提交规则未通过，请根据details修改稿件。", details=details
+            code, "提交检查未通过，请根据details修改稿件。", details=details
         )
         while len(result.model_dump_json()) > self.settings.max_tool_result_chars and details:
             details = details[:-1]
             result = ToolResult.failure(
-                "BRIEF_RULES_REJECTED",
+                code,
                 "提交规则未通过，请修改稿件或缩小提交范围。",
                 details=details,
             )

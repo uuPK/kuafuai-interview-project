@@ -1,6 +1,6 @@
 # 开发与配置
 
-当前完成步骤 3.1：研究工具、正文与历史之外，增加结构化简报规则检查、提交意图、原子简报/历史保存。生产 submit_brief 需要独立质量核对，接入口在本步保留，3.2 实现；Worker、发送记录与页面按后续步骤推进。
+当前完成步骤 3.2：结构化简报规则与原子保存之外，接入独立 DeepSeek 核对、服务端引用上下文与相关历史，并限制最多两次提交。Worker、发送记录与页面按后续步骤推进。
 
 ## 本地环境
 
@@ -31,6 +31,7 @@ uv run --frozen --extra dev --cache-dir .uv-cache python -m uvicorn app.main:cre
 | 网络限制 | 单次超时默认 30 秒；含首请求最多尝试 3 次；重定向和下载大小限制可配置 |
 | 任务预算 | 默认模型 15、搜索 8、抓取 12、工具 50 次；10 分钟截止；模型预算至少 2 次，以容纳后续决策预留 |
 | 内容大小 | 工具结果默认 12,000 字符、模型输入默认 120,000 字符、`MAX_MODEL_RESPONSE_BYTES` 默认 2,000,000 字节；执行器、循环与 HTTP 读取分别检查 |
+| 核对上下文 | `MAX_REVIEW_CONTEXT_CHARS` 默认 8,000、范围 256～50,000 字符，限制单项引用与完整相邻段落；整个请求继续受模型输入上限约束 |
 
 API key、SMTP 认证信息、会话密钥使用 `SecretStr`，相关字段排除 repr 与配置序列化；端点和邮件地址也排除展示。校验错误的文字隐藏输入值，服务配置缺失错误只列字段名。Settings 属于服务端内部对象，不能整体放入模型输入、工具结果或公共响应。Pydantic 的结构化 `ValidationError.errors()` 仍可能包含原始输入，后续错误记录须通过统一脱敏处理，不直接记录原始对象。
 
@@ -172,7 +173,7 @@ SQLite v8 增加 run_progress 和 delivered_history，升级保留既有窗口�
 
 离线入口为 tests/test_research.py、tests/test_phase_two.py 和 tests/research_support.py；后者是标记 fixture 的固定新闻世界，生产解析、来源保存、文件读取和工具执行器仍实际运行。真实模型测试 tests/test_research_live.py 默认跳过，显式设置 NEWS_RESEARCH_LIVE=1 才用本地 DeepSeek 配置运行三个场景，每场最多 15 次模型请求、单次最多 2048 输出 tokens、外部请求只尝试一次；搜索/RSS/正文和历史均为替身，不请求真实搜索或邮件。
 
-可再设置 NEWS_RESEARCH_REPLAY=1 审计每个场景已保存的最近轨迹；审计读取原数据库、草稿和固定正文，不新增模型请求，也不改模型草稿。报告的 verification_scope 明确限于阶段 2 决策和材料读取，citation_checks 单独记录原文切片是否等于 quote。2.6 三份真实模型草稿暴露引用位置与摘录不一致，原始失败 JUnit 保留；3.1 新规则已在记录重放中严格拒绝四处原始错误位置。提示词补充空白/换行与位置一致的要求后，尚未重新验证真实模型自行修正引用；后续按 3.2 核对修订。
+可再设置 NEWS_RESEARCH_REPLAY=1 审计每个场景已保存的最近轨迹；审计读取原数据库、草稿和固定正文，不新增模型请求，也不改模型草稿。报告的 verification_scope 明确限于阶段 2 决策和材料读取，citation_checks 单独记录原文切片是否等于 quote。2.6 三份真实模型草稿暴露引用位置与摘录不一致，原始失败 JUnit 保留；3.1 新规则已在记录重放中严格拒绝四处原始错误位置。3.2 另用新任务验证真实模型在位置错误反馈后调用完整摘录定位并更新范围；该新样例不改写原来三份草稿的验收结论。
 
 ## 简报提交规则与保存
 
@@ -186,10 +187,28 @@ SQLite v8 增加 run_progress 和 delivered_history，升级保留既有窗口�
 
 跨条目的相同 URL/正文哈希记录 duplicate_hints，不根据相似标题或 event_id 自动删除新闻；同条目重复引用会拒绝。空简报需覆盖全部话题及不足原因，并具备当前任务已完成的真实工具发现快照；有效零结果与依赖失败分别处理。存在未成功的搜索/抓取调用、已有候选但未取得正文、检索记录损坏时拒绝标记 no_news；后续独立核对继续判断未覆盖理由与实际证据是否一致。
 
-规则通过后调用可信 reviewer 接口，其 ReviewOutcome 必须严格符合 approved/issues 结构，批准与问题列表不可矛盾。生产尚未接入 3.2 时返回 BRIEF_REVIEW_UNAVAILABLE，AgentRunner 配对反馈后记录依赖配置失败，不产生交付记录。测试显式注入核对替身，并把 review_basis=fixture 写入确认、简报与事件；模型 schema、Settings 和页面均没有跳过核对参数。中文表达、摘要语义、上下文条件和事件重复的真实独立核对在 3.2 实施。
+规则通过后调用可信 reviewer 接口，其 ReviewOutcome 必须严格符合 approved/issues 结构，批准与问题列表不可矛盾。3.2 在应用启动时注册 IndependentReviewer；缺少真实模型配置时返回 BRIEF_REVIEW_UNAVAILABLE，记录依赖配置失败，不产生交付记录。测试显式注入核对替身，并把 review_basis=fixture 写入确认、简报与事件；模型 schema、Settings 和页面均没有跳过核对参数。真实核对的输入、协议与验收范围见下节。
 
 SQLite v9 增加 submission_jobs 和 briefs。`app/storage/briefs.py` 先保存核对通过的提交意图，绑定 run/call、调用指纹、原稿、来源版本、重复线索和服务端简报 ID；最终完成回调复核材料后，在同一事务保存简报、completed/no_news 状态、事件历史、工具结果及 AgentRunner 的成对反馈。引用 URL、哈希和日期从服务端来源生成；定时邮件记录仍在 3.4 接入。本步不发送邮件。
 
 事务中断不会留下半份交付，核对意图保留以便恢复；同一调用重新读取意图时校验原稿/调用/来源，复用同一 ID 与核对结果。已经完成的调用复用结果，不重复保存历史或扣预算。意图、确认或来源版本变化明确报错；自动 Worker 接管执行中调用在 3.3，当前测试显式恢复同一调用。get(brief_id,user_id) 经运行归属查询简报，其他用户与不存在记录统一反馈不存在，保存稿件损坏返回 BRIEF_STATE_PROBLEM。
 
 离线入口为 tests/test_briefs.py。设置 NEWS_SUBMISSION_REPLAY=1 可运行 tests/test_brief_reference_replay.py，检查已保存的三场 DeepSeek 引用与两篇真实 NVIDIA 正文；不新增模型/HTTP 请求，也不改原草稿。回归草稿仅投影正式 schema 字段并提供明确标记 fixture 的标题；另外提供正确位置证明规则可通过，不表示模型已自行修正或正式摘要核对通过。报告保存在 Git 忽略的 data/acceptance/，验收范围见 acceptance.md。
+
+## 独立核对与一次修订
+
+入口仍为 submit_brief(draft)，没有新增模型工具。app/agent/review.py 先重新校验固定来源版本、正文/索引哈希和引用切片，再从每项引用两侧至少取600字符，并向完整相邻段落扩展，附最近章节标题、原始范围、正文长度、URL、发布时间及内容哈希。单项超过 MAX_REVIEW_CONTEXT_CHARS 或完整请求超过 MAX_MODEL_INPUT_CHARS 时返回具体稿件字段与原因，不截去必要条件后批准。中文字检查先拒绝完全没有汉字的公开标题、摘要及说明，混合语言的表达质量仍交模型核对。
+
+历史固定取当前用户、window_end 之前最近7天已交付事件，沿用 ResearchStore 的归属和来源关系校验。按话题、机构/产品实体、版本或事件标识保守筛选相关事件；最多扫描200条、送入50条，超出边界明确拒绝完整核对。普通 query_history 工具的 days/limit 上限保持30/20。核对输入还包含本任务已完成的搜索/RSS发现结果和已取得来源目录，便于核实不足与未覆盖理由；空简报额外提供已取得固定正文，仍受材料扫描与模型输入上限约束。
+
+独立请求使用既有 DeepSeekClient 和配置，但只带新的 system/user 两条消息，tools 为空，不带研究对话或思考历史，不执行模型提出的行动。输入不含用户标识、邮箱、收件人、目录或服务凭据，发现敏感材料时先反馈问题。网页、发现结果、历史和草稿仅作为材料。提示词核对数字、单位、实体、比较对象、测试条件、中文、相关性、同事件合并和历史新增事实，并明确概括标题、可选元数据与等义翻译的边界；可选润色不应成为拒绝原因。
+
+输出仅允许完整 JSON approved/issues；批准必须没有问题，拒绝必须有1～10项问题，每项 field/issue 不超过80字符。问题路径须来自当前草稿，截断响应、工具调用、额外/重复JSON键、错误类型、无效路径和相互矛盾的决定均返回 BRIEF_REVIEW_PROTOCOL，不批准。规则拒绝为 BRIEF_RULES_REJECTED，核对或核对输入问题为 BRIEF_REVIEW_REJECTED；都提供有界、脱敏的字段反馈，主 Agent 自主决定重读、补查、改稿或换题。
+
+SQLite v10 增加 brief_reviews，记录绑定同一 run/call、调用指纹与输入哈希的独立请求及受控响应。网络前保存输入并在短事务预扣一次 model_requests；每次HTTP尝试都计模型预算，整个逻辑提交只计一次 tool_calls。网络重试沿用外部请求最多3次、Retry-After、截止时间与 waiting_retry。研究循环和工具守卫额外预留一次核对名额，最后一次研究决策与一次核对合计至少两个模型名额。
+
+格式、规则、核对输入或语义失败均按已启动 submit_brief 调用计提交次数，最多两次；同一ID结果复用或同调用网络重试不增加提交次数。第二次仍失败在结果事务保存 brief_revision_exhausted 和具体问题；该响应中的剩余调用继续配对 RUN_FINISHED。鉴权/配额/配置/协议问题记录依赖分类，核对临时故障耗尽重试记录 brief_review_service_failed，不能当作有效空新闻。任务预算与截止时间仍独立限制运行。
+
+有效或无效核对响应都保存在受控表中并脱敏；公开核对事件仅含调用ID、决定有效性、问题数量和有限token计数。响应已保存但提交意图尚未保存时，同一调用核对输入一致即可复用响应，不再次请求模型或扣模型预算；来源、输入或响应损坏明确反馈。未知结果的执行中请求仍需要3.3 Worker接管，当前恢复测试显式恢复同一调用。核对通过后继续使用3.1的意图及原子简报/历史保存流程。
+
+离线入口为 tests/test_review.py，固定证据辅助代码为 tests/brief_support.py。真实样例需显式设置 NEWS_REVIEW_LIVE=1 后执行 tests/test_review_live.py；它读取本地DeepSeek配置，新闻/搜索/网页仍为标记fixture的固定材料。每场模型请求上限12、网络最多2次，全部记录在 Git 忽略的 data/acceptance/review-live-2026-10-13/。样例包含错误数字、遗漏条件、重复/新增事件及真实主模型的数字/引用范围修订，不能替代五份真实新闻简报人工核对。首轮误判、后续调整及最终结果见 acceptance.md。

@@ -14,6 +14,7 @@ class SubmissionTool:
     async def submit(self, context, parameters):
         if context.tool_call_id is None:
             raise PermissionError("submission requires a server-bound call")
+        self.store.check_attempt(context)
         prepared = self.store.prepared(context, parameters.draft)
         if prepared is not None:
             return prepared
@@ -30,7 +31,7 @@ class SubmissionTool:
             await self.reviewer(context, parameters.draft, checked)
         )
         if not outcome.approved:
-            return self.store.rules.rejection(outcome.issues)
+            return self.store.rules.rejection(outcome.issues, code="BRIEF_REVIEW_REJECTED")
         return self.store.stage(context, parameters.draft, checked, self.review_basis)
 
 
@@ -55,5 +56,9 @@ def register_submission(registry, store, *, reviewer=None, review_basis="indepen
             tool.submit,
             completion_status=submission_completion,
             on_completed=store.on_completed,
+            retry_safe=True,
+            reserve_model_requests=getattr(
+                reviewer, "reserve_model_requests", 1 if review_basis == "independent" else 0
+            ),
         )
     )

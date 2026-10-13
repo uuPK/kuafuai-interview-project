@@ -96,6 +96,7 @@ class GuardrailStore:
         invocation: ToolInvocation,
         *,
         is_submission: bool,
+        reserved_model_requests: int = 0,
     ) -> ToolResult | None:
         with self.database.connection() as connection:
             run = _record(self.runs._owned_row(connection, run_id, user_id))
@@ -108,7 +109,8 @@ class GuardrailStore:
                 return ToolResult.failure("BUDGET_EXCEEDED", "任务预算或截止时间已耗尽。")
             if not is_submission and (
                 run.budget_limits.tool_calls - run.budget_usage.tool_calls <= 1
-                or run.budget_limits.model_requests - run.budget_usage.model_requests <= 0
+                or run.budget_limits.model_requests - run.budget_usage.model_requests
+                <= reserved_model_requests
             ):
                 return ToolResult.failure(
                     "SUBMISSION_REQUIRED", "剩余预算已预留给提交，请调用提交工具。"

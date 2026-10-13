@@ -8,6 +8,7 @@ from pydantic import Field
 
 from app.agent.briefs import BriefDocument, BriefDraft, SubmitParameters
 from app.agent.research import HistoryEvent
+from app.harness.failures import FATAL_CATEGORIES, FailureInfo
 from app.storage.models import StateChange, StoredModel, timestamp
 from app.storage.runs import _record
 from app.storage.snapshots import SourceMetadata
@@ -45,6 +46,24 @@ class BriefStore:
     @staticmethod
     def _problem():
         raise ToolFailure("BRIEF_STATE_PROBLEM", "简报提交意图或来源版本不一致，请核查存储。")
+
+    def check_attempt(self, context):
+        with self.database.connection() as connection:
+            self.runs._owned_row(connection, context.run_id, context.user_id)
+            call = self.calls._row(connection, context.run_id, context.tool_call_id)
+            if call["name"] != "submit_brief" or call["status"] != "executing":
+                raise PermissionError("submission requires an executing call")
+            count = self._attempts(connection, context.run_id)
+            if count > 2:
+                raise ToolFailure("BRIEF_SUBMISSION_LIMIT", "已达到两次提交上限，无法继续核对。")
+
+    @staticmethod
+    def _attempts(connection, run_id):
+        return connection.execute(
+            "SELECT COUNT(*) FROM tool_calls WHERE run_id=? AND name='submit_brief' "
+            "AND started_at IS NOT NULL",
+            (run_id,),
+        ).fetchone()[0]
 
     def _job(self, row, call):
         try:
@@ -133,6 +152,10 @@ class BriefStore:
 
     def on_completed(self, connection, call):
         if not call.result.ok:
+            run = _record(
+                connection.execute("SELECT * FROM runs WHERE id=?", (call.run_id,)).fetchone()
+            )
+            attempts = self._attempts(connection, call.run_id)
             self.runs._append_event(
                 connection,
                 call.run_id,
@@ -142,8 +165,36 @@ class BriefStore:
                     "tool_call_id": call.tool_call_id,
                     "error_code": call.result.error.code,
                     "issues": [issue.model_dump() for issue in call.result.error.details],
+                    "submission_attempts": attempts,
+                    "revisions_remaining": max(0, 2 - attempts),
                 },
             )
+            code = call.result.error.code
+            request = connection.execute(
+                "SELECT failure_json FROM external_requests WHERE run_id=? AND tool_call_id=?",
+                (call.run_id, call.tool_call_id),
+            ).fetchone()
+            failure = (
+                FailureInfo.model_validate_json(request[0]) if request and request[0] else None
+            )
+            dependency = code in {
+                "BRIEF_REVIEW_SERVICE_FAILED",
+                "BRIEF_REVIEW_TIMEOUT",
+                "TOOL_TIMEOUT",
+            }
+            fatal = failure is not None and failure.category in FATAL_CATEGORIES
+            if run.status == "running" and (dependency or fatal or attempts >= 2):
+                reason = "brief_review_service_failed" if dependency else "brief_revision_exhausted"
+                if fatal:
+                    reason = f"tool_dependency_{failure.category}"
+                # Budget reasons are set by the paired-feedback hook.
+                if code != "BUDGET_EXCEEDED":
+                    self.runs._transition(
+                        connection,
+                        run,
+                        StateChange(status="failed", stop_reason=reason),
+                        self.runs.now(),
+                    )
             return
         row = connection.execute(
             "SELECT payload_json FROM submission_jobs WHERE run_id=? AND tool_call_id=?",

@@ -6,6 +6,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from fastapi import FastAPI
 
 from app.agent.brief_rules import BriefRules
+from app.agent.review import IndependentReviewer
 from app.api.health import router as health_router
 from app.config import Settings
 from app.providers.bocha import BochaClient
@@ -78,7 +79,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             register_research(registry, research, configured)
             briefs = BriefStore(research, BriefRules(sources, configured))
             application.state.brief_store = briefs
-            register_submission(registry, briefs)
+            reviewer = IndependentReviewer(model, research, sources, configured)
+            application.state.brief_reviewer = reviewer
+            register_submission(registry, briefs, reviewer=reviewer)
             application.state.tool_registry = registry
             application.state.tool_executor = ToolExecutor(
                 registry, application.state.call_store, configured
