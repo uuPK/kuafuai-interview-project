@@ -6,12 +6,9 @@ from pydantic import Field
 
 from app.tools.context import ToolContext
 from app.tools.discovery import SearchParameters
+from app.tools.fetch import FetchParameters
 from app.tools.models import ToolFailure, ToolParameters, ToolResult
 from app.tools.registry import CompletionStatus, ToolDefinition, ToolRegistry
-
-
-class FetchParameters(ToolParameters):
-    candidate_id: str = Field(min_length=1, max_length=100)
 
 
 class FixtureDraft(ToolParameters):

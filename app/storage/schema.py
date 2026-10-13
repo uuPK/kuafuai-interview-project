@@ -1,6 +1,6 @@
 """Versioned SQLite schema, introduced incrementally with implementation steps."""
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA_V1 = (
     """
@@ -218,4 +218,30 @@ SCHEMA_V5 = (
     )
     """,
     "CREATE INDEX candidates_run ON candidates(run_id, id)",
+)
+
+SCHEMA_V6 = (
+    """
+    CREATE TABLE sources (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        url TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        metadata_json TEXT NOT NULL,
+        index_json TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX sources_url_hash ON sources(run_id, url, content_hash)",
+    "CREATE INDEX sources_body_hash ON sources(run_id, content_hash)",
+    """
+    CREATE TABLE source_calls (
+        run_id TEXT NOT NULL,
+        tool_call_id TEXT NOT NULL,
+        candidate_id TEXT NOT NULL REFERENCES candidates(id),
+        source_id TEXT NOT NULL REFERENCES sources(id),
+        PRIMARY KEY (run_id, tool_call_id),
+        FOREIGN KEY (run_id, tool_call_id)
+            REFERENCES tool_calls(run_id, tool_call_id) ON DELETE CASCADE
+    )
+    """,
 )

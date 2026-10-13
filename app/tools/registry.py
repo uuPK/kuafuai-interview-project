@@ -1,6 +1,7 @@
 """Trusted tool registration; expose only argument schemas to the model."""
 
 import inspect
+import sqlite3
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
@@ -22,6 +23,7 @@ RESERVED_FIELDS = {
 Handler = Callable[[ToolContext, ToolParameters], Awaitable[ToolResult]]
 CompletionStatus = Literal["completed", "no_news"]
 CompletionResolver = Callable[[ToolResult], CompletionStatus | None]
+ResultHook = Callable[[sqlite3.Connection, object], None]
 
 
 class ToolMetadata(ToolParameters):
@@ -39,6 +41,7 @@ class ToolDefinition:
     budget_dimension: Literal["tool_calls", "searches", "fetches"] = "tool_calls"
     completion_status: CompletionResolver | None = None
     retry_safe: bool = False
+    on_completed: ResultHook | None = None
 
     def __post_init__(self) -> None:
         ToolMetadata(
@@ -64,6 +67,10 @@ class ToolDefinition:
             raise ValueError("completion resolver must be synchronous and callable")
         if not isinstance(self.retry_safe, bool):
             raise ValueError("retry safety must be an explicit server-side boolean")
+        if self.on_completed is not None and (
+            not callable(self.on_completed) or inspect.iscoroutinefunction(self.on_completed)
+        ):
+            raise ValueError("result persistence hook must be synchronous and callable")
 
     def schema(self) -> dict:
         return {

@@ -99,6 +99,15 @@ class ToolExecutor:
     def finish(
         self, run_id, user_id, invocation, result, *, on_finished=None, stop_reason=None
     ) -> ToolResult:
+        definition = self.registry.get(invocation.name)
+        if definition is not None and definition.on_completed is not None:
+            previous = on_finished
+
+            def on_finished(connection, record):
+                definition.on_completed(connection, record)
+                if previous is not None:
+                    previous(connection, record)
+
         request = self.requests.for_tool(run_id, user_id, invocation.tool_call_id)
         if request is not None:
             record = self.requests.complete_tool(

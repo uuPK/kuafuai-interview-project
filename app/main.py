@@ -9,12 +9,15 @@ from app.api.health import router as health_router
 from app.config import Settings
 from app.providers.bocha import BochaClient
 from app.providers.deepseek import DeepSeekClient
+from app.providers.public_http import PublicHttpClient
 from app.storage.calls import CallStore
 from app.storage.candidates import CandidateStore
 from app.storage.conversations import ConversationStore
 from app.storage.database import Database
 from app.storage.runs import RunStore
+from app.storage.sources import SourceStore
 from app.tools.executor import ToolExecutor
+from app.tools.fetch import register_fetch
 from app.tools.registry import ToolRegistry
 from app.tools.search import register_search
 
@@ -46,6 +49,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             application.state.candidate_store = candidates
             registry = ToolRegistry()
             register_search(registry, bocha, candidates, configured)
+            public_http = await stack.enter_async_context(PublicHttpClient(configured))
+            sources = SourceStore(candidates, configured)
+            application.state.public_http_client = public_http
+            application.state.source_store = sources
+            register_fetch(registry, public_http, sources, configured)
             application.state.tool_registry = registry
             application.state.tool_executor = ToolExecutor(
                 registry, application.state.call_store, configured

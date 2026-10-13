@@ -1,6 +1,6 @@
 # 开发与配置
 
-当前完成步骤 2.2：执行骨架、持久记录、DeepSeek 适配器和博查搜索候选。后续功能按《实施计划-v1.2.md》第 8.1 节逐步实现。
+当前完成步骤 2.3：执行骨架、持久记录、DeepSeek、博查候选，以及公开网页正文快照与字符位置索引。后续功能按《实施计划-v1.2.md》第 8.1 节逐步实现。
 
 ## 本地环境
 
@@ -13,7 +13,7 @@ uv sync --frozen --extra dev --cache-dir .uv-cache
 uv run --frozen --extra dev --cache-dir .uv-cache python -m uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-启动后请求 `GET http://127.0.0.1:8000/health`，成功响应为 `{"status":"ok"}`。启动过程初始化 SQLite；DeepSeek、博查分别在配置齐全时建立异步客户端，关闭应用时释放连接。启动与健康接口均不发送真实服务请求，健康响应只代表进程可响应。研究任务的公开 API 与 Worker 在对应步骤加入。
+启动后请求 `GET http://127.0.0.1:8000/health`，成功响应为 `{"status":"ok"}`。启动过程初始化 SQLite；DeepSeek、博查分别在配置齐全时建立异步客户端，并建立公开网页客户端，关闭应用时释放连接。启动与健康接口均不发送真实服务请求，健康响应只代表进程可响应。研究任务的公开 API 与 Worker 在对应步骤加入。
 
 ## 配置读取与边界
 
@@ -64,3 +64,19 @@ HTTP 测试使用 FastAPI TestClient，开发依赖包含其当前使用的 `htt
 SQLite v5 增加 discoveries、candidates，升级保持既有消息、调用与预算。候选生成 `cand-` ID 并绑定当前 run 和工具调用，查询同时核对当前用户及任务。HTTP 请求在数据库事务之外完成；脱敏供应商响应、候选、完整工具返回结果与搜索事件一起在短事务保存。已保存发现快照不可覆盖，同一调用再次执行直接返回原结果和候选 ID；工具最终完成与反馈消息仍沿用执行器的事务。保存后、工具完成前中断时可复用发现快照；执行状态不确定的 Worker 接管仍在 3.3 实施。
 
 模型收到每条标题最多 300、摘要最多 800 字符，并看到截断标记；候选原始文本保存在受控数据库。整个工具结果继续受 `MAX_TOOL_RESULT_CHARS` 限制，必要时减少可见条目并标明省略数量，无法容纳任何条目时反馈大小错误。供应商响应读取受 `MAX_DOWNLOAD_BYTES` 限制；真实契约样本在 `tests/fixtures/bocha-success.json`，运行数据库与真实请求报告在 Git 忽略的 `data/acceptance/`。
+
+## 正文抓取、时间依据与快照
+
+`app/tools/fetch.py` 注册真实 `fetch_url(candidate_id)`，candidate_id 为 1～100 字符，必须来自当前用户、当前 run 的发现记录。工具参数拒绝额外字段；URL、任务目录、用户和调用 ID 由服务端取得。应用启动注册 search/fetch，研究任务入口按后续步骤接入。一次逻辑抓取计一次 fetches 和 tool_calls，临时故障沿用 harness 的有限重试、Retry-After、截止时间和 waiting_retry。
+
+`app/providers/public_http.py` 使用 [HTTP Core 的网络后端接口](https://www.encode.io/httpcore/network-backends/)：先解析域名，检查整组 DNS 地址，直接连接通过校验的 IP；发送 HTTP 前和 TLS 前后核对实际 peer，HTTPS 使用原域名的 Host/SNI 和默认 CA 证书校验。拒绝内网、回环、链路本地、保留、多播及 IPv6 过渡地址；每次重定向重新校验 URL、DNS 和连接。请求不携带 API 密钥、Cookie 或环境代理配置。最多 `MAX_REDIRECTS` 次跳转，整个 GET 尝试受 `REQUEST_TIMEOUT_SECONDS` 约束，正文受 `MAX_DOWNLOAD_BYTES` 限制。接收 HTML/XHTML，使用 identity 编码，其他内容类型或压缩编码返回明确错误。
+
+`app/providers/article.py` 根据 [Trafilatura 提取接口](https://trafilatura.readthedocs.io/en/latest/corefunctions.html) 提取正文与元数据，先识别网页编码再统一成 UTF-8。HTML 解析禁用额外网络请求。正文保留标题、段落、列表与表格行；标题优先取页面声明的首行，缺失时使用候选标题。正文脱敏后统一 LF 换行，再一次生成 Unicode 字符偏移、SHA-256 和章节/段落索引。偏移从零开始，区间为 `[start_offset, end_offset)`，按解码后字符串计算，包含中文和 emoji。
+
+发布时间依据单独保存：HTML 明确发布日期、文章 JSON-LD、标记 datePublished 的 time 元素，以及搜索和提取器的原始日期线索。只有原文明示、含时区的精确发布时间一致且处于 run 固定窗口，才返回 `usable_in_window=true`。日期缺失、仅精确到天、无时区、冲突或窗口外时，正文仍可保存，但工具返回 false 和具体 issues，供模型补查或换来源；抓取时间和更新时间不补成发布日期。正式提交检查在 3.1 接入。
+
+模型得到 source_id、最终 URL、标题、相对正文路径、字符数、哈希、最多 800 字符预览、章节位置、时间判定和同 URL/同正文的来源线索。返回值受 `MAX_TOOL_RESULT_CHARS` 限制，缩减章节时附 omitted_sections，完整索引留在受控材料中；无法容纳最小结果时明确失败。相同 URL 的新逻辑调用创建新快照，保留旧来源；相同调用的完整登记材料复用原 ID、正文与位置，不重新访问网页。事件级合并在 2.6 实施。
+
+`app/storage/snapshots.py` 把正文和 index.json 保存到 `data/runs/<run_id>/sources/<source_id>/`。临时文件在同目录写入并 fsync，通过硬链接原子发布且禁止覆盖已有不同内容；固定快照不属于模型 scratch 写权限。可信登记材料保存在模型工作目录之外的 `data/source_jobs/<run_id>/`，记录调用、来源、索引和完整工具结果，先保存意图再发布正文/索引。
+
+SQLite v6 增加 sources 与 source_calls，升级保留原候选和调用。网络、提取和文件发布在数据库事务之外；执行器的服务端同步完成回调把来源元数据、索引、关联、调用结果与模型反馈放进同一短事务。任一写入失败全部回滚，完整文件可继续复用。文件、索引、登记材料或数据库内容缺失/不一致时返回 `SOURCE_STATE_PROBLEM`；路径和归属越界返回权限错误。自动领取和接管尚未完成登记的执行调用在 3.3 实施，本步测试已验证重开数据库后的材料复用和一致登记。

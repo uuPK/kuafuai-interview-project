@@ -484,6 +484,7 @@ def test_offline_startup_exposes_configuration_feedback(tool_env):
 def test_v5_migration_preserves_v4_runs_and_rolls_back_failure(tool_env, monkeypatch, tmp_path):
     old = Database(tmp_path / "v4.sqlite3")
     statements = database_module.SCHEMA_V5
+    monkeypatch.setattr(database_module, "SCHEMA_V6", ())
     monkeypatch.setattr(database_module, "SCHEMA_VERSION", 4)
     monkeypatch.setattr(database_module, "SCHEMA_V5", ())
     old.initialize()
