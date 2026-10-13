@@ -5,7 +5,7 @@ import re
 from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from app.tools.models import ToolParameters
 
@@ -92,6 +92,14 @@ class CandidateMaterial(ToolParameters):
     site_name: str | None = None
     language: str | None = None
     date_clues: dict[str, str | None] = Field(default_factory=dict)
+    discovery_method: Literal["web_search", "read_feed"] = "web_search"
+    feed_id: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+    @model_validator(mode="after")
+    def validate_provenance(self):
+        if (self.discovery_method == "read_feed") != (self.feed_id is not None):
+            raise ValueError("feed provenance requires method and ID together")
+        return self
 
     @field_validator("url")
     @classmethod

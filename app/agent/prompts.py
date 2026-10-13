@@ -22,7 +22,7 @@ MISSING_SUBMISSION_PROMPT = (
 )
 
 
-def initial_messages(run: RunRecord) -> tuple[InputMessage, InputMessage]:
+def initial_messages(run: RunRecord, *, available_feeds=()) -> tuple[InputMessage, InputMessage]:
     task = {
         "topics": run.subscription.topics,
         "keywords": run.subscription.keywords,
@@ -34,6 +34,7 @@ def initial_messages(run: RunRecord) -> tuple[InputMessage, InputMessage]:
         "budget_usage": run.budget_usage.model_dump(),
         "deadline_at": run.deadline_at.isoformat() if run.deadline_at else None,
     }
+    task["available_feeds"] = list(available_feeds)
     return (
         InputMessage(role="system", content=SYSTEM_PROMPT),
         InputMessage(role="user", content=json.dumps(task, ensure_ascii=False)),

@@ -33,7 +33,8 @@ class SearchTool:
             "excluded": 0,
             "duplicate_url": 0,
         }
-        accepted, seen = [], set()
+        accepted, new, references, seen = [], [], [], set()
+        known = self.store.known_urls(context.run_id, context.user_id)
         for material in response.items:
             if not matches_domains(material.url, parameters.domains):
                 filtered["domain"] += 1
@@ -48,15 +49,19 @@ class SearchTool:
                 filtered["duplicate_url"] += 1
                 continue
             seen.add(material.url)
-            accepted.append(
-                CandidateRecord(
+            candidate = known.get(material.url)
+            if candidate is None:
+                candidate = CandidateRecord(
                     candidate_id="cand-" + uuid4().hex,
                     run_id=context.run_id,
                     tool_call_id=context.tool_call_id,
-                    position=len(accepted),
+                    position=len(new),
                     material=material,
                 )
-            )
+                new.append(candidate)
+            else:
+                references.append(candidate.candidate_id)
+            accepted.append(candidate)
         visible = accepted[: parameters.limit]
         items = []
         for candidate in visible:
@@ -70,16 +75,20 @@ class SearchTool:
                     "summary": summary[:800],
                     "language": material.language,
                     "date_clues": material.date_clues,
+                    "discovery_method": material.discovery_method,
+                    "feed_id": material.feed_id,
                     "text_truncated": len(summary) > 800 or len(material.title) > 300,
                 }
             )
         data = {
             "provider": "bocha",
+            "discovery_method": "web_search",
             "items": items,
             "requested_language": parameters.language,
             "freshness": "oneDay",
             "received_count": response.received_count,
             "filtered": filtered,
+            "reused_count": len(references),
             "omitted_count": len(accepted) - len(items),
             "provider_request_id": response.provider_request_id,
             "observation": "候选摘要仅用于发现来源；日期和正文仍需抓取核实。"
@@ -105,7 +114,8 @@ class SearchTool:
             provider="bocha",
             provider_request_id=response.provider_request_id,
             raw=response.raw,
-            candidates=tuple(accepted),
+            candidates=tuple(new),
+            references=tuple(references),
             result=result,
         )
         return saved.result

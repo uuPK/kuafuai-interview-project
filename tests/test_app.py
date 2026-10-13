@@ -75,6 +75,7 @@ def test_startup_registers_basic_tools_without_starting_docker(tmp_path, monkeyp
         assert {schema["function"]["name"] for schema in registry.schemas()} == {
             "web_search",
             "fetch_url",
+            "read_feed",
             "list_dir",
             "read_file",
             "search_content",

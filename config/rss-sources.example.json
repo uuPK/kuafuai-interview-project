@@ -1,0 +1,10 @@
+{
+  "feeds": [
+    {
+      "feed_id": "example-official",
+      "name": "官方来源占位",
+      "url": "https://example.com/feed.xml",
+      "enabled": false
+    }
+  ]
+}

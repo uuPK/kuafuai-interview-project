@@ -61,6 +61,7 @@ class CandidateStore:
         raw: dict,
         candidates: tuple[CandidateRecord, ...],
         result: ToolResult,
+        references: tuple[str, ...] = (),
     ) -> DiscoveryRecord:
         """Persist the complete replay result with its candidate IDs in one short transaction."""
         if not result.ok:
@@ -102,6 +103,14 @@ class CandidateStore:
                         candidate.material.model_dump_json(),
                     ),
                 )
+            for candidate_id in references:
+                if (
+                    connection.execute(
+                        "SELECT id FROM candidates WHERE run_id=? AND id=?", (run_id, candidate_id)
+                    ).fetchone()
+                    is None
+                ):
+                    raise PermissionError("referenced candidate does not belong to this run")
             self.runs._append_event(
                 connection,
                 run_id,
@@ -111,7 +120,11 @@ class CandidateStore:
                     "tool_call_id": call_id,
                     "provider": provider,
                     "provider_request_id": provider_request_id,
-                    "candidate_ids": [candidate.candidate_id for candidate in candidates],
+                    "candidate_ids": list(
+                        dict.fromkeys(
+                            [candidate.candidate_id for candidate in candidates] + list(references)
+                        )
+                    ),
                     "received_count": result.data["received_count"],
                     "filtered": result.data["filtered"],
                     "omitted_count": result.data["omitted_count"],
@@ -136,3 +149,22 @@ class CandidateStore:
             values["candidate_id"] = values.pop("id")
             values["material"] = CandidateMaterial.model_validate_json(values.pop("material_json"))
             return CandidateRecord.model_validate(values)
+
+    def known_urls(self, run_id, user_id) -> dict[str, CandidateRecord]:
+        with self.database.connection() as connection:
+            self.runs._owned_row(connection, run_id, user_id)
+            rows = connection.execute(
+                "SELECT * FROM candidates WHERE run_id=? ORDER BY rowid", (run_id,)
+            ).fetchall()
+        found = {}
+        for row in rows:
+            material = CandidateMaterial.model_validate_json(row["material_json"])
+            if material.url not in found:
+                found[material.url] = CandidateRecord(
+                    candidate_id=row["id"],
+                    run_id=run_id,
+                    tool_call_id=row["tool_call_id"],
+                    position=row["position"],
+                    material=material,
+                )
+        return found

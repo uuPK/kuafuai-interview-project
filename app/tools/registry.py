@@ -86,6 +86,7 @@ class ToolDefinition:
 class ToolRegistry:
     def __init__(self) -> None:
         self._definitions: dict[str, ToolDefinition] = {}
+        self.available_feeds: tuple[dict[str, str], ...] = ()
 
     def register(self, definition: ToolDefinition) -> None:
         if definition.name in self._definitions:

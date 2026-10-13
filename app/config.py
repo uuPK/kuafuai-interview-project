@@ -79,12 +79,19 @@ class Settings(BaseSettings):
     bash_docker_host: str | None = Field(default=None, repr=False, exclude=True)
     bash_timeout_seconds: float = Field(default=10, gt=0, le=30, allow_inf_nan=False)
     bash_output_bytes: int = Field(default=24_000, ge=256, le=1_000_000)
+    rss_sources_file: Path | None = Field(default=None, repr=False, exclude=True)
+    max_rss_entries: int = Field(default=500, ge=1, le=2000)
 
     @field_validator("data_dir")
     @classmethod
     def resolve_data_dir(cls, value: Path) -> Path:
         """Resolve the configured storage root without creating runtime files."""
         return value.expanduser().resolve()
+
+    @field_validator("rss_sources_file")
+    @classmethod
+    def resolve_rss_file(cls, value):
+        return value.expanduser().resolve() if value is not None else None
 
     @field_validator(
         "deepseek_base_url",

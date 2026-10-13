@@ -195,7 +195,11 @@ class AgentRunner:
         if run.status == RunStatus.QUEUED:
             run = self.runs.transition(run_id, user_id, StateChange(status="running"))
         if run.status == RunStatus.RUNNING:
-            self.conversations.initialize(run_id, user_id, initial_messages(run))
+            self.conversations.initialize(
+                run_id,
+                user_id,
+                initial_messages(run, available_feeds=self.executor.registry.available_feeds),
+            )
         while True:
             try:
                 await self._finish_pending(run_id, user_id)

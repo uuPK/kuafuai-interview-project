@@ -9,6 +9,7 @@ from app.api.health import router as health_router
 from app.config import Settings
 from app.providers.bocha import BochaClient
 from app.providers.deepseek import DeepSeekClient
+from app.providers.feeds import FeedCatalog, FeedClient
 from app.providers.public_http import PublicHttpClient
 from app.storage.calls import CallStore
 from app.storage.candidates import CandidateStore
@@ -19,6 +20,7 @@ from app.storage.runs import RunStore
 from app.storage.sources import SourceStore
 from app.tools.bash import register_bash
 from app.tools.executor import ToolExecutor
+from app.tools.feed import register_feed
 from app.tools.fetch import register_fetch
 from app.tools.files import register_file_tools
 from app.tools.registry import ToolRegistry
@@ -53,6 +55,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             registry = ToolRegistry()
             register_search(registry, bocha, candidates, configured)
             public_http = await stack.enter_async_context(PublicHttpClient(configured))
+            feed_catalog = FeedCatalog.load(configured)
+            application.state.feed_catalog = feed_catalog
+            register_feed(
+                registry, FeedClient(public_http, configured), candidates, configured, feed_catalog
+            )
             sources = SourceStore(candidates, configured)
             application.state.public_http_client = public_http
             application.state.source_store = sources

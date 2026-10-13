@@ -1,6 +1,6 @@
 # 开发与配置
 
-当前完成步骤 2.3：执行骨架、持久记录、DeepSeek、博查候选，以及公开网页正文快照与字符位置索引。后续功能按《实施计划-v1.2.md》第 8.1 节逐步实现。
+当前完成步骤 2.5：执行骨架、持久记录、DeepSeek、博查与 RSS 候选、公开网页正文快照和字符位置索引，以及五个基础工具。后续功能按《实施计划-v1.2.md》第 8.1 节逐步实现。
 
 ## 本地环境
 
@@ -126,3 +126,34 @@ docker build -t daily-ai-news-tools:local docker/tool
 stdout/stderr 合计读取受 `BASH_OUTPUT_BYTES` 限制，超过立即停止；执行受 Bash 超时和外层任务截止时间共同约束。超时/取消会终止 Docker CLI，并尝试 `docker rm -f` 清理当前调用的确定性容器名，临时配置最后清理。bash_started 事件在启动前保存 run、调用、命令名和容器名；Docker 失联时不能确认清理完成，后续 3.3 Worker 根据任务标签/容器名接管。Docker 不可用明确反馈 `BASH_UNAVAILABLE`，请求无响应反馈 `BASH_TIMEOUT`；真实隔离验收状态见 acceptance.md。
 
 新增配置默认：`MAX_MATERIAL_FILE_BYTES=16100000`、`MAX_MATERIAL_SCAN_BYTES=32200000`、`MAX_MATERIAL_FILES=200`、`MAX_NOTE_CHARS=50000`、`BASH_TIMEOUT_SECONDS=10`、`BASH_OUTPUT_BYTES=24000`。上限与类型在 Settings 校验，`.env.example` 提供说明，配置修改后重启生效。
+
+## 官方 RSS/Atom 候选
+
+`app/tools/feed.py` 注册 `read_feed(feed_id, limit)`，模型只能选择服务端已启用的来源 ID；limit 默认 5，范围 1～10，拒绝额外参数和任意订阅地址。初始任务输入中的 available_feeds 仅包含 ID、名称。模型自行决定是否读取、选择哪个来源，以及读取后继续搜索或抓取；应用启动不访问 RSS。
+
+在本地 `.env` 中设置 `RSS_SOURCES_FILE=data/rss-sources.json`，按 `config/rss-sources.example.json` 创建来源文件；示例只有禁用的占位来源。配置结构为：
+
+```json
+{
+  "feeds": [
+    {
+      "feed_id": "example-official",
+      "name": "官方来源示例",
+      "url": "https://example.com/feed.xml",
+      "enabled": false
+    }
+  ]
+}
+```
+
+feed_id 为最多 64 字符的小写字母、数字、下划线或连字符，名称最多 100 字符；ID 不得重复，最多 20 个来源，文件最多 100 KB。URL 必须是无账号密码的公开 HTTP(S) 地址，配置不得含凭据。未设置路径时可启动但没有可用来源；明确指定的文件缺失、无效或含敏感内容时启动失败，错误只展示通用说明。来源配置加载一次，修改后重启生效；实际地址与可用性见 acceptance.md，本地运行配置与 `.env` 均受 Git 忽略。
+
+`app/providers/feeds.py` 用共享 PublicHttpClient 请求清单，沿用整组 DNS、实际 peer、每次跳转、identity 编码、整体超时和下载大小校验；请求不带 API 密钥或 Cookie。lxml 解析 RSS 2.0 和 Atom，禁用实体替换、DTD 加载、网络与额外文件解析，拒绝 DTD、实体声明和 XInclude。解析上限由 `MAX_RSS_ENTRIES` 控制，默认 500、最大 2000；RSS 链接/永久 GUID、Atom alternate HTML 链接及 xml:base 相对地址在解析后再次规范化并校验，拒绝内网、凭据或无标题的条目。解析规则参考 [RSS 2.0](https://www.rssboard.org/rss-specification)、[Atom RFC 4287](https://www.rfc-editor.org/rfc/rfc4287) 和 [lxml 解析接口](https://lxml.de/parsing.html)。
+
+候选保存 discovery_method/feed_id、标题、URL、摘要、语言及原始日期线索。RSS pubDate/dc:date 与 Atom published 只用于发现时粗筛；含时区且相互一致的精确日期用于排除明确的旧条目与未来条目。缺失、天精度、无时区和冲突日期保留原值，交给正文抓取核实；Atom updated 和清单更新时间单独记录。摘要移除 HTML 标记并脱敏，解析过程中不访问图片或文章。
+
+搜索和 RSS 通过 CandidateStore 按当前用户/run 的规范 URL 双向复用候选 ID。同一 URL 首次登记的材料、日期和来源保持固定；本次工具结果顶层和脱敏发现快照记录当前发现方式、RSS 来源或博查响应，条目中的 discovery_method/feed_id 表示候选首次来源。原始响应保留本次线索，复用引用须属于当前 run。去重只处理页面链接，事件合并按 2.6 实施。整个发现结果、候选及复用关系在同一短事务登记，同一调用复用完整结果，反馈提交失败后可读回快照恢复；自动 Worker 接管在 3.3 实施。
+
+返回标题最多 300、摘要最多 800 字符，附 text_truncated、过滤原因、reused_count、omitted_count；完整 JSON 受 `MAX_TOOL_RESULT_CHARS` 限制。有效空清单/全部旧条目返回成功的空候选，未知或禁用 ID、解析失败、全部条目无效、结果无法容纳等返回统一错误，HTTP 故障沿用公网请求错误码。429、5xx、超时由 harness 有限重试或保存 waiting_retry；每次逻辑读取计一次 searches 和 tool_calls，与 web_search 共用发现预算，重试保持同一调用，下载清单不扣 fetches。候选经 fetch_url 进入已有正文、索引、哈希、定位和分页读取链路，正式引用提交检查在 3.1 实施。
+
+RSS 测试入口为 `tests/test_feeds.py`，覆盖配置/参数、解析与 XML 安全、日期、链接和候选复用、大小限制、重试/恢复及模型按反馈换来源后读取正文。真实请求报告保存到 Git 忽略的 `data/acceptance/`；本机已启用 NVIDIA，DeepMind 编码兼容和 Hugging Face 联通保持待复验。
