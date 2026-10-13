@@ -109,6 +109,16 @@ docker build -t daily-ai-news-tools:local docker/tool
 
 构建上下文仅为 docker/tool，项目 `.env` 与运行数据不会进入上下文。`BASH_IMAGE` 默认上述本地标签，工具使用 `--pull=never`，镜像需事先构建。`BASH_DOCKER_HOST` 为空时选择本地 Unix socket，Windows 选择 Docker Desktop Linux named pipe；配置只接受本地 unix/npipe 地址。Docker 管理端点仅由可信服务端使用，容器只有当前任务目录的只读 /work 挂载。
 
+Docker Hub 下载不可达时，可从 [Docker 官方的 ECR 发布仓库](https://gallery.ecr.aws/docker/library/debian) 下载相同 Debian 基础镜像，增加本地标签后构建；无须修改系统 Docker 镜像源。本机 2026-10-13 已用此路径构建成功，基础镜像摘要记录于验收报告。
+
+```text
+docker pull public.ecr.aws/docker/library/debian:bookworm-slim
+docker tag public.ecr.aws/docker/library/debian:bookworm-slim debian:bookworm-slim
+docker build -t daily-ai-news-tools:local docker/tool
+```
+
+真实容器测试位于 `tests/test_docker_live.py`，默认跳过；设置 `NEWS_DOCKER_LIVE=1` 后执行 `python -m pytest tests/test_docker_live.py tests/test_bash.py`。测试要求可用本地 Linux 引擎及已构建镜像，直接核对容器权限、命令执行与清理。测试中的可信权限探测脚本不属于模型可调用命令。
+
 运行参数固定禁用网络、只读根文件系统、非 root 用户 10001、移除全部 capability、no-new-privileges，并限制 PID=32、内存/交换总量=64 MB、CPU=0.5。启动禁止 profile/rc，清空 BASH_ENV/ENV；客户端进程只保留 PATH/Windows 系统和临时目录环境变量。每次建立空 auths/proxies 的临时 Docker 配置，防止默认客户端配置自动注入代理凭据。挂载前验证全部文件，容器不带模型/搜索/SMTP 密钥或 Docker socket。参数依据 [Docker 运行文档](https://docs.docker.com/engine/containers/run/) 与 [container run CLI](https://docs.docker.com/reference/cli/docker/container/run/)。
 
 只读命令允许 ls 的 -l/-a/-la/-al/-1/-d、wc 的 -c/-m/-l/-w/-L、sort 的 -u/-n/-r、uniq 的 -c/-d/-u、rg 的 -n/-i/-l/-c/-F；head/tail 的 -n 取 1～200、-c 取 1～6000。文件参数最多 10 个，uniq 只允许一个输入文件；仅 ls/rg 可指定目录。拒绝管道、重定向、命令替换、控制字符、任意程序及其他选项。所有文件路径转换成 /work 内路径，参数通过独立 argv 传递。

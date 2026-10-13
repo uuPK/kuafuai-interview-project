@@ -127,7 +127,13 @@ Bash 使用替身 Runner 和异步子进程测试，覆盖全部七种允许命�
 
 2026-10-13 执行本地真实文件工具链：scratch 笔记原子落盘、目录列出、关键词定位、按字符读取均通过。没有请求 DeepSeek、博查、公开网页或 SMTP。本机 Docker CLI 29.6.1 已安装；有界启动 Docker Desktop 超时，后续引擎请求仍无响应。真实 bash 的 `wc -m scratch/check.txt` 在 5 秒单次限制下进行了 3 次有限尝试，均超时，最终反馈 `BASH_TIMEOUT`，逻辑 tool_calls 只计 1 次；已尝试清理，但失联引擎无法确认容器状态。
 
-本地报告为 Git 忽略的 `data/acceptance/material-live-2026-10-13.json`，含五个结果、真实尝试次数和 pending 状态；运行数据库与笔记位于 `data/acceptance/material-live-2026-10-13/`。没有构建工具镜像或成功执行真实容器命令。本步代码与替身链路交付，真实容器联通/隔离验收保持待完成；恢复可用 Linux Docker 引擎后，按 development.md 构建工具镜像，并实测只读挂载、无网络、非 root、无凭据/socket、资源限制和超时/取消后无残留。Worker 自动接管写入/清理仍在 3.3，Compose 整合在 5.1。
+初次本地报告为 Git 忽略的 `data/acceptance/material-live-2026-10-13.json`，保留当时五个结果、尝试次数和 pending 状态；运行数据库与笔记位于 `data/acceptance/material-live-2026-10-13/`。后续补验如下。Worker 自动接管写入/清理仍在 3.3，Compose 整合在 5.1。
+
+同日用户启动 Docker 后补验：Linux 引擎 29.6.1 / Docker Desktop 4.81.0 已连通；Docker Hub 下载鉴权地址连接失败，改从 [Docker 官方 ECR 仓库](https://gallery.ecr.aws/docker/library/debian) 匿名下载相同 Debian bookworm-slim，基础摘要 `sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587`，本地加标签后成功构建 `daily-ai-news-tools:local`，未修改 Docker 全局配置或项目 Dockerfile。
+
+设置 `NEWS_DOCKER_LIVE=1` 执行 `tests/test_docker_live.py tests/test_bash.py`：75 passed，其中 5 项为真实容器集成测试。真实五工具链路及全部七种只读命令通过，中文/emoji/带空格路径可读取；直接探测确认 UID=10001、scratch 挂载与根文件系统不可写、外网连接失败、无 API/SMTP/代理凭据和 Docker socket、NoNewPrivs=1、CapEff=0。inspect 核对 network=none、64 MB 内存/交换总量、0.5 CPU、PID=32、只读单挂载和非 privileged。实际超时、取消和合计输出超限后 CLI 停止，确定性容器名下无残留，临时配置已清理；初次失败报告所属容器也无残留。
+
+原始 JUnit 报告和摘要保存在 Git 忽略的 `data/acceptance/docker-live-2026-10-13.xml`、`docker-live-2026-10-13.json`；新增可重复的 opt-in 测试随代码提交。本步五个基础工具的真实联通与容器权限验收完成。
 
 ## 真实服务联通
 
@@ -136,7 +142,7 @@ Bash 使用替身 Runner 和异步子进程测试，覆盖全部七种允许命�
 | DeepSeek 连续工具调用 | 已通过普通与思考两种真实协议验收；新闻工具为替身 | 完整真实新闻研究在搜索、正文和质量工具接入后验收 |
 | 博查真实搜索与契约样本 | 2.2 已通过；中文候选、域名过滤、英文/随机零结果及脱敏契约样本已记录 | 完整模型研究与正式引用质量继续在后续步骤验收 |
 | 公开网页抓取与正文登记 | 2.3 已通过小规模真实链路；正文、索引、哈希和明确日期可读回 | 真实英文来源及完整模型研究质量继续在后续步骤验收 |
-| 五个基础工具与 Docker Bash | 2.4 文件链路真实通过；Docker 请求超时，隔离权限由替身检查 | 恢复可用 Linux Docker 引擎、构建工具镜像，实测隔离权限和超时/取消后的清理 |
+| 五个基础工具与 Docker Bash | 2.4 真实链路与隔离补验通过；工具镜像已构建，权限/资源和超时/取消/输出超限清理已实测 | Worker 接管及进程崩溃后的残留清理继续在 3.3 验收 |
 | 官方 RSS 来源与正文链路 | 待验收；工具及来源配置安排在 2.5 | 逐个请求确认公开来源，记录地址/时间/解析结果，并验证统一候选、正文和引用链路 |
 | SMTP 指定测试邮箱 | 待验收；发送器尚未实现 | 填写服务器、认证与发件信息，配置指定测试收件人并执行发送 |
 | 真实模型关键行为至少 3 次 | 待验收 | 执行补查、修订等关键场景，记录成功情况、调用次数、token 和耗时 |
