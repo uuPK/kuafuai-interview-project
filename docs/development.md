@@ -1,6 +1,6 @@
 # 开发与配置
 
-当前完成步骤 2.5：执行骨架、持久记录、DeepSeek、博查与 RSS 候选、公开网页正文快照和字符位置索引，以及五个基础工具。后续功能按《实施计划-v1.2.md》第 8.1 节逐步实现。
+当前完成步骤 2.6：执行骨架、持久记录、DeepSeek、博查与 RSS 候选、正文快照和字符位置索引、五个基础工具，以及历史查询、任务进度和偏好研究提示词。正式简报提交、质量核对与 Worker 按阶段 3 实施。
 
 ## 本地环境
 
@@ -157,3 +157,19 @@ feed_id 为最多 64 字符的小写字母、数字、下划线或连字符，�
 返回标题最多 300、摘要最多 800 字符，附 text_truncated、过滤原因、reused_count、omitted_count；完整 JSON 受 `MAX_TOOL_RESULT_CHARS` 限制。有效空清单/全部旧条目返回成功的空候选，未知或禁用 ID、解析失败、全部条目无效、结果无法容纳等返回统一错误，HTTP 故障沿用公网请求错误码。429、5xx、超时由 harness 有限重试或保存 waiting_retry；每次逻辑读取计一次 searches 和 tool_calls，与 web_search 共用发现预算，重试保持同一调用，下载清单不扣 fetches。候选经 fetch_url 进入已有正文、索引、哈希、定位和分页读取链路，正式引用提交检查在 3.1 实施。
 
 RSS 测试入口为 `tests/test_feeds.py`，覆盖配置/参数、解析与 XML 安全、日期、链接和候选复用、大小限制、重试/恢复及模型按反馈换来源后读取正文。真实请求报告保存到 Git 忽略的 `data/acceptance/`；本机已启用 NVIDIA，DeepMind 编码兼容和 Hugging Face 联通保持待复验。
+
+## 偏好、历史与研究进度
+
+`app/tools/research.py` 注册两个工具。`query_history(days, limit)` 默认最近 7 天/10 条，days 为 1～30，limit 为 1～20；基准时间固定为当前 run 的 window_end。`update_progress(collected, missing, issues)` 用整组替换保存三个短列表，collected/missing 最多 20 项、每项 120 字符，issues 最多 10 项、每项 300 字符。列表拒绝空白、控制字符、重复项，已取得与待补充话题不可重叠，话题必须来自订阅快照；大小写匹配后返回订阅原名。身份、任务、调用 ID 都由服务端绑定，两个工具各消耗一次 tool_calls，不扣搜索或抓取预算。
+
+SQLite v8 增加 run_progress 和 delivered_history，升级保留既有窗口、预算、候选、来源、工具反馈和材料位置。`app/storage/research.py` 的进度完成回调与调用结果、模型反馈在同一短事务保存，失败回滚，重复完成同一调用不重复产生事件。进度保存原模型报告及 model_reported 标记，只辅助决策，不能改变 run 完成状态。重开数据库可读回最后一份进度，自动接管执行状态不确定的调用在 3.3 接入。
+
+历史保存已接受简报中的事件标识、标题、话题、机构、产品版本、事件日期、关键事实、引用和交付时间；标题相似或 event_id 相同不会自动删掉不同事实。只读查询通过 runs.user_id 校验归属，仅读取 completed 运行的历史，排除当前任务及固定基准时间之后的交付，按时间排序并报告省略数量。来源 URL 和正文哈希从服务端来源记录取得，模型不能提供覆盖值；历史引用用于比较，不属于当前任务的新新闻证据。结果受完整 JSON 大小限制，无法容纳有效条目时返回明确错误；存储或来源关系损坏返回 HISTORY_STATE_PROBLEM，避免解释为有效空历史。
+
+可信发布入口 `ResearchStore.record_delivery(connection, run_id, user_id, brief_id, events)` 要求已有写事务，校验完成状态、当前用户、全部来源归属与范围后才写入事件，固定交付记录不可覆盖。正式提交工具在 3.1 完成原文引用及新闻规则检查，并在同一交付事务调用此入口；本步生产应用尚无提交工具，也不会把普通文本、笔记或替身提交自动写成已交付历史。测试通过显式历史替身验证读写契约，正式历史入库联通保留给 3.1。
+
+`app/agent/prompts.py` 明确订阅相关性、新进展、实际价值与证据充分程度四项选题依据；要求每条有简短 selection_reason、每个未覆盖话题有原因，合并同事件多报道、比较不同版本，并在缺口/失败/定位未命中后调整行动。JSON 草稿可写到 scratch/brief.json，items 每项至少带 title/topics/selection_reason；`app/agent/research.py` 只投影这三个有界字段，由文件完成回调记录 research_selections。摘要和其他草稿字段仍保存在文件与调用记录中。事件标记 model_reported，供时间线展示模型选题说明；草稿写入及理由事件与反馈协调提交，文件落盘后反馈失败仍可复用写入意图恢复。普通笔记不产生选题说明，写草稿不代表正式提交。
+
+离线入口为 tests/test_research.py、tests/test_phase_two.py 和 tests/research_support.py；后者是标记 fixture 的固定新闻世界，生产解析、来源保存、文件读取和工具执行器仍实际运行。真实模型测试 tests/test_research_live.py 默认跳过，显式设置 NEWS_RESEARCH_LIVE=1 才用本地 DeepSeek 配置运行三个场景，每场最多 15 次模型请求、单次最多 2048 输出 tokens、外部请求只尝试一次；搜索/RSS/正文和历史均为替身，不请求真实搜索或邮件。
+
+可再设置 NEWS_RESEARCH_REPLAY=1 审计每个场景已保存的最近轨迹；审计读取原数据库、草稿和固定正文，不新增模型请求，也不改模型草稿。报告的 verification_scope 明确限于阶段 2 决策和材料读取，citation_checks 单独记录原文切片是否等于 quote。本次三份真实模型草稿均暴露引用位置与摘录不一致，原始失败 JUnit 保留，阶段 3.1 继续严格拒绝并反馈修订；提示词已补充空白/换行与位置一致的要求，该新增提示尚未重新进行真实模型引用验收。

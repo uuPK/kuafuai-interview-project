@@ -483,6 +483,7 @@ def test_v6_migration_preserves_candidates_and_rolls_back(tool_env, tmp_path, mo
     old = Database(tmp_path / "v5.sqlite3")
     statements = database_module.SCHEMA_V6
     monkeypatch.setattr(database_module, "SCHEMA_V7", ())
+    monkeypatch.setattr(database_module, "SCHEMA_V8", ())
     monkeypatch.setattr(database_module, "SCHEMA_VERSION", 5)
     monkeypatch.setattr(database_module, "SCHEMA_V6", ())
     old.initialize()

@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from pydantic import Field, model_validator
 
+from app.agent.research import selection_notes
+from app.harness.redaction import Redactor
 from app.storage.models import StoredModel
 from app.storage.snapshots import SnapshotFiles, _safe_path, digest
 from app.tools.models import ToolFailure, ToolResult
@@ -41,6 +43,7 @@ class WriteJob(StoredModel):
 class MaterialStore:
     def __init__(self, sources, settings):
         self.sources, self.settings = sources, settings
+        self.redactor = Redactor(settings)
         self.runs, self.database = sources.runs, sources.database
         self.files = SnapshotFiles(settings.data_dir, settings.max_material_file_bytes)
 
@@ -184,6 +187,24 @@ class MaterialStore:
                 self.runs.now(),
                 {"tool_call_id": call.tool_call_id, **call.result.data},
             )
+            if call.result.data["path"] == "scratch/brief.json":
+                try:
+                    content = json.loads(call.arguments)["content"]
+                except (ValueError, KeyError, TypeError):
+                    content = ""
+                notes = selection_notes(self.redactor.clean(content))
+                if notes:
+                    self.runs._append_event(
+                        connection,
+                        call.run_id,
+                        "research_selections",
+                        self.runs.now(),
+                        {
+                            "tool_call_id": call.tool_call_id,
+                            "items": notes,
+                            "basis": "model_reported",
+                        },
+                    )
 
     @staticmethod
     def new_cursor():

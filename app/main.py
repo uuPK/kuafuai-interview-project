@@ -16,6 +16,7 @@ from app.storage.candidates import CandidateStore
 from app.storage.conversations import ConversationStore
 from app.storage.database import Database
 from app.storage.materials import MaterialStore
+from app.storage.research import ResearchStore
 from app.storage.runs import RunStore
 from app.storage.sources import SourceStore
 from app.tools.bash import register_bash
@@ -24,6 +25,7 @@ from app.tools.feed import register_feed
 from app.tools.fetch import register_fetch
 from app.tools.files import register_file_tools
 from app.tools.registry import ToolRegistry
+from app.tools.research import register_research
 from app.tools.search import register_search
 
 
@@ -68,6 +70,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             application.state.material_store = materials
             register_file_tools(registry, materials, configured)
             register_bash(registry, materials, configured)
+            research = ResearchStore(application.state.call_store, configured)
+            application.state.research_store = research
+            register_research(registry, research, configured)
             application.state.tool_registry = registry
             application.state.tool_executor = ToolExecutor(
                 registry, application.state.call_store, configured

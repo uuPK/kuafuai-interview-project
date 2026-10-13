@@ -438,6 +438,8 @@ def test_v6_migration_preserves_run_and_rolls_back(tmp_path, monkeypatch):
     database = Database(path)
     original = database_module.SCHEMA_V7
     monkeypatch.setattr(database_module, "SCHEMA_V7", ())
+    latest = database_module.SCHEMA_V8
+    monkeypatch.setattr(database_module, "SCHEMA_V8", ())
     database.initialize()
     with database.connection() as connection:
         connection.execute("PRAGMA user_version=6")
@@ -450,10 +452,14 @@ def test_v6_migration_preserves_run_and_rolls_back(tmp_path, monkeypatch):
             "SELECT name FROM sqlite_master WHERE name='material_reads'"
         ).fetchone()
     monkeypatch.setattr(database_module, "SCHEMA_V7", original)
+    monkeypatch.setattr(database_module, "SCHEMA_V8", latest)
     database.initialize()
     database.initialize()
     with database.connection() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert (
+            connection.execute("PRAGMA user_version").fetchone()[0]
+            == database_module.SCHEMA_VERSION
+        )
         assert connection.execute("SELECT name FROM sqlite_master WHERE name='sources'").fetchone()
 
 
