@@ -1,6 +1,6 @@
 """Versioned SQLite schema, introduced incrementally with implementation steps."""
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA_V1 = (
     """
@@ -244,4 +244,18 @@ SCHEMA_V6 = (
             REFERENCES tool_calls(run_id, tool_call_id) ON DELETE CASCADE
     )
     """,
+)
+
+SCHEMA_V7 = (
+    """CREATE TABLE material_reads (
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        path TEXT NOT NULL, content_hash TEXT NOT NULL,
+        PRIMARY KEY (run_id, path)
+    )""",
+    """CREATE TABLE material_cursors (
+        id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        directory TEXT NOT NULL, keyword_hash TEXT NOT NULL, manifest_json TEXT NOT NULL,
+        file_position INTEGER NOT NULL CHECK(file_position >= 0),
+        char_position INTEGER NOT NULL CHECK(char_position >= 0)
+    )""",
 )

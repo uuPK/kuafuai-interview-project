@@ -24,6 +24,13 @@ class ToolContext:
         if not path or "\x00" in path or windows_path.drive or windows_path.root:
             raise PermissionError("path must be relative to the task directory")
         root = self.working_dir
+        if root.resolve() != root:
+            raise PermissionError("task root changed")
+        current = root
+        for part in Path(path.replace("\\", "/")).parts:
+            current = current / part
+            if current.is_symlink() or current.is_junction():
+                raise PermissionError("task paths cannot use links")
         target = (root / path.replace("\\", "/")).resolve()
         boundary = root / "scratch" if write else root
         if not target.is_relative_to(boundary) or target == boundary:
@@ -39,8 +46,9 @@ def bind_context(
     run = runs.get_run(run_id, user_id)
     data_root = data_dir.resolve()
     base = data_root / "runs"
-    root = (base / run.id).resolve()
-    if not base.resolve().is_relative_to(data_root) or not root.is_relative_to(base):
+    expected = base / run.id
+    root = expected.resolve()
+    if base.resolve() != base or root != expected or not root.is_relative_to(base):
         raise PermissionError("task directory resolves outside the configured root")
     return ToolContext(
         run_id=run.id,

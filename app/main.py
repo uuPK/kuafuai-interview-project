@@ -14,10 +14,13 @@ from app.storage.calls import CallStore
 from app.storage.candidates import CandidateStore
 from app.storage.conversations import ConversationStore
 from app.storage.database import Database
+from app.storage.materials import MaterialStore
 from app.storage.runs import RunStore
 from app.storage.sources import SourceStore
+from app.tools.bash import register_bash
 from app.tools.executor import ToolExecutor
 from app.tools.fetch import register_fetch
+from app.tools.files import register_file_tools
 from app.tools.registry import ToolRegistry
 from app.tools.search import register_search
 
@@ -54,6 +57,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             application.state.public_http_client = public_http
             application.state.source_store = sources
             register_fetch(registry, public_http, sources, configured)
+            materials = MaterialStore(sources, configured)
+            application.state.material_store = materials
+            register_file_tools(registry, materials, configured)
+            register_bash(registry, materials, configured)
             application.state.tool_registry = registry
             application.state.tool_executor = ToolExecutor(
                 registry, application.state.call_store, configured

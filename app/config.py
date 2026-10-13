@@ -67,6 +67,18 @@ class Settings(BaseSettings):
     max_tool_result_chars: int = Field(default=12_000, ge=256)
     max_model_input_chars: int = Field(default=120_000, ge=1)
     max_model_response_bytes: int = Field(default=2_000_000, ge=256)
+    max_material_file_bytes: int = Field(default=16_100_000, ge=1)
+    max_material_scan_bytes: int = Field(default=32_200_000, ge=1)
+    max_material_files: int = Field(default=200, ge=1, le=2000)
+    max_note_chars: int = Field(default=50_000, ge=1, le=100_000)
+    bash_image: str = Field(
+        default="daily-ai-news-tools:local",
+        max_length=200,
+        pattern=r"^[a-z0-9][a-z0-9._/-]*(?::[A-Za-z0-9._-]+|@sha256:[a-f0-9]{64})$",
+    )
+    bash_docker_host: str | None = Field(default=None, repr=False, exclude=True)
+    bash_timeout_seconds: float = Field(default=10, gt=0, le=30, allow_inf_nan=False)
+    bash_output_bytes: int = Field(default=24_000, ge=256, le=1_000_000)
 
     @field_validator("data_dir")
     @classmethod
@@ -112,6 +124,19 @@ class Settings(BaseSettings):
     def validate_session_secret(cls, value: SecretStr | None) -> SecretStr | None:
         if value is not None and len(value.get_secret_value()) < 32:
             raise ValueError("session secret must contain at least 32 characters")
+        return value
+
+    @field_validator("bash_docker_host", mode="before")
+    @classmethod
+    def local_docker_host(cls, value):
+        if value is None or value == "":
+            return None
+        if (
+            not isinstance(value, str)
+            or not (value.startswith("unix:///") or value.startswith("npipe:////./pipe/"))
+            or any(char.isspace() or char in "\x00\r\n" for char in value)
+        ):
+            raise ValueError("Bash requires a local Docker socket or named pipe")
         return value
 
     @property

@@ -80,3 +80,39 @@ SQLite v5 增加 discoveries、candidates，升级保持既有消息、调用与
 `app/storage/snapshots.py` 把正文和 index.json 保存到 `data/runs/<run_id>/sources/<source_id>/`。临时文件在同目录写入并 fsync，通过硬链接原子发布且禁止覆盖已有不同内容；固定快照不属于模型 scratch 写权限。可信登记材料保存在模型工作目录之外的 `data/source_jobs/<run_id>/`，记录调用、来源、索引和完整工具结果，先保存意图再发布正文/索引。
 
 SQLite v6 增加 sources 与 source_calls，升级保留原候选和调用。网络、提取和文件发布在数据库事务之外；执行器的服务端同步完成回调把来源元数据、索引、关联、调用结果与模型反馈放进同一短事务。任一写入失败全部回滚，完整文件可继续复用。文件、索引、登记材料或数据库内容缺失/不一致时返回 `SOURCE_STATE_PROBLEM`；路径和归属越界返回权限错误。自动领取和接管尚未完成登记的执行调用在 3.3 实施，本步测试已验证重开数据库后的材料复用和一致登记。
+
+## 五个基础工具与材料权限
+
+应用启动在 `app/main.py` 注册五个基础工具，沿用 `ToolExecutor` 的严格 schema、当前用户/run 绑定、统一 `ToolResult`、调用记录、结果大小、截止时间和反馈完成事务。五个工具只计 `tool_calls`；材料关键词检索不计外部搜索预算。启动不执行 Docker 请求。模型参数不能指定身份、任务目录、凭据或收件人。
+
+| 工具与参数 | 行为与边界 |
+| --- | --- |
+| `list_dir(path=".")` | 列当前任务材料目录；返回相对路径、文件字符数、哈希。只读 sources/scratch，结果容量不足时返回 omitted_count；隐藏条目不展示 |
+| `read_file(path, offset=0, limit=3000)` | 按 Unicode 字符、零起点、半开区间读取 UTF-8；limit 最大 6000。返回实际 start/end、next_offset、eof/truncated、完整字符数和哈希。正文附 source_id，索引和笔记不提供正文引用身份 |
+| `search_content(keyword, dir=".", cursor=null, limit=10)` | 非空字面、区分大小写检索；limit 最大 20。返回匹配和邻近摘录的字符范围、路径、版本、正文 source_id；索引 JSON 不参与全文搜索 |
+| `write_file(path, content)` | 只写 scratch，脱敏后统一 UTF-8/LF。记录原哈希、目标哈希和完整结果后同目录临时写入/fsync/原子替换。返回哈希和字符数；写草稿不改变交付状态 |
+| `bash(command)` | 只接受单条 ls/wc/head/tail/sort/uniq/rg 命令及明确允许的参数；模型命令分成 argv，经固定 Bash 脚本 `exec "$@"` 启动。rg 强制字面匹配，Bash 输出不作为引用字符索引 |
+
+材料路径只允许当前任务的 sources/scratch，拒绝绝对路径、盘符、越界、符号链接和 junction、隐藏文件、Windows 设备名/备用数据流及敏感凭据路径。来源正文/索引读取先经过 SourceStore 归属和双文件哈希核对，再核对实际读入字节；来源文件不可写。普通笔记须有效 UTF-8，含未经脱敏凭据的文件阻止读取，避免正文删改后位置漂移。文件、扫描总量和目录条目有独立上限，工具完整 JSON 仍受结果字符限制。
+
+SQLite v7 新增 material_reads 和 material_cursors，保持已有候选、来源、消息和预算。成功读取的版本与调用结果/反馈在同一短事务保存；笔记变化后旧分页明确返回 `FILE_VERSION_CHANGED`，从 offset=0 重新读取会建立新版本。首次按章节位置读取可直接使用非零 offset。搜索游标是随机令牌，服务端保存 run、目录、关键词哈希、完整文件版本清单和位置；伪造或跨查询返回 `FILE_CURSOR_INVALID`，增删文件或内容变化返回版本变化。结果容量缩小时，游标从最后实际返回的命中继续，避免丢失条目。
+
+写入意图保存在模型目录之外的 `data/file_jobs/<run_id>/<call_hash>.json`，核对调用、路径、内容、哈希和结果一致性。完成前中断可复用同一意图：当前哈希等于目标则复用原结果；等于原哈希则继续写入；其他变化返回 `FILE_WRITE_CONFLICT`。文件写入在数据库事务外完成，material_written 事件、最终调用结果与模型反馈一起提交；反馈事务失败时文件和意图保留供恢复。执行状态不确定的调用仍交由 3.3 Worker 接管，本步没有自动重复覆盖。
+
+## 隔离 Bash 运行环境
+
+工具镜像源码为 `docker/tool/Dockerfile`，提供 Bash、GNU coreutils 和 ripgrep，默认非 root。启用本地 Linux Docker 引擎后，在项目根目录执行：
+
+```text
+docker build -t daily-ai-news-tools:local docker/tool
+```
+
+构建上下文仅为 docker/tool，项目 `.env` 与运行数据不会进入上下文。`BASH_IMAGE` 默认上述本地标签，工具使用 `--pull=never`，镜像需事先构建。`BASH_DOCKER_HOST` 为空时选择本地 Unix socket，Windows 选择 Docker Desktop Linux named pipe；配置只接受本地 unix/npipe 地址。Docker 管理端点仅由可信服务端使用，容器只有当前任务目录的只读 /work 挂载。
+
+运行参数固定禁用网络、只读根文件系统、非 root 用户 10001、移除全部 capability、no-new-privileges，并限制 PID=32、内存/交换总量=64 MB、CPU=0.5。启动禁止 profile/rc，清空 BASH_ENV/ENV；客户端进程只保留 PATH/Windows 系统和临时目录环境变量。每次建立空 auths/proxies 的临时 Docker 配置，防止默认客户端配置自动注入代理凭据。挂载前验证全部文件，容器不带模型/搜索/SMTP 密钥或 Docker socket。参数依据 [Docker 运行文档](https://docs.docker.com/engine/containers/run/) 与 [container run CLI](https://docs.docker.com/reference/cli/docker/container/run/)。
+
+只读命令允许 ls 的 -l/-a/-la/-al/-1/-d、wc 的 -c/-m/-l/-w/-L、sort 的 -u/-n/-r、uniq 的 -c/-d/-u、rg 的 -n/-i/-l/-c/-F；head/tail 的 -n 取 1～200、-c 取 1～6000。文件参数最多 10 个，uniq 只允许一个输入文件；仅 ls/rg 可指定目录。拒绝管道、重定向、命令替换、控制字符、任意程序及其他选项。所有文件路径转换成 /work 内路径，参数通过独立 argv 传递。
+
+stdout/stderr 合计读取受 `BASH_OUTPUT_BYTES` 限制，超过立即停止；执行受 Bash 超时和外层任务截止时间共同约束。超时/取消会终止 Docker CLI，并尝试 `docker rm -f` 清理当前调用的确定性容器名，临时配置最后清理。bash_started 事件在启动前保存 run、调用、命令名和容器名；Docker 失联时不能确认清理完成，后续 3.3 Worker 根据任务标签/容器名接管。Docker 不可用明确反馈 `BASH_UNAVAILABLE`，请求无响应反馈 `BASH_TIMEOUT`；真实隔离验收状态见 acceptance.md。
+
+新增配置默认：`MAX_MATERIAL_FILE_BYTES=16100000`、`MAX_MATERIAL_SCAN_BYTES=32200000`、`MAX_MATERIAL_FILES=200`、`MAX_NOTE_CHARS=50000`、`BASH_TIMEOUT_SECONDS=10`、`BASH_OUTPUT_BYTES=24000`。上限与类型在 Settings 校验，`.env.example` 提供说明，配置修改后重启生效。

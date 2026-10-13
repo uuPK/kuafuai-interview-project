@@ -63,3 +63,22 @@ def test_incompatible_database_prevents_startup(tmp_path: Path) -> None:
         connection.execute("PRAGMA user_version = 999")
     with pytest.raises(SchemaVersionError), TestClient(create_app(settings)):
         pass
+
+
+def test_startup_registers_basic_tools_without_starting_docker(tmp_path, monkeypatch):
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("startup must not run Docker")
+
+    monkeypatch.setattr("app.tools.bash.DockerRunner.execute", forbidden)
+    with TestClient(create_app(Settings(_env_file=None, data_dir=tmp_path))) as client:
+        registry = client.app.state.tool_registry
+        assert {schema["function"]["name"] for schema in registry.schemas()} == {
+            "web_search",
+            "fetch_url",
+            "list_dir",
+            "read_file",
+            "search_content",
+            "write_file",
+            "bash",
+        }
+        assert client.get("/health").status_code == 200
