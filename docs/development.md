@@ -1,6 +1,6 @@
 # 开发与配置
 
-当前完成步骤 2.6：执行骨架、持久记录、DeepSeek、博查与 RSS 候选、正文快照和字符位置索引、五个基础工具，以及历史查询、任务进度和偏好研究提示词。正式简报提交、质量核对与 Worker 按阶段 3 实施。
+当前完成步骤 3.1：研究工具、正文与历史之外，增加结构化简报规则检查、提交意图、原子简报/历史保存。生产 submit_brief 需要独立质量核对，接入口在本步保留，3.2 实现；Worker、发送记录与页面按后续步骤推进。
 
 ## 本地环境
 
@@ -166,10 +166,30 @@ SQLite v8 增加 run_progress 和 delivered_history，升级保留既有窗口�
 
 历史保存已接受简报中的事件标识、标题、话题、机构、产品版本、事件日期、关键事实、引用和交付时间；标题相似或 event_id 相同不会自动删掉不同事实。只读查询通过 runs.user_id 校验归属，仅读取 completed 运行的历史，排除当前任务及固定基准时间之后的交付，按时间排序并报告省略数量。来源 URL 和正文哈希从服务端来源记录取得，模型不能提供覆盖值；历史引用用于比较，不属于当前任务的新新闻证据。结果受完整 JSON 大小限制，无法容纳有效条目时返回明确错误；存储或来源关系损坏返回 HISTORY_STATE_PROBLEM，避免解释为有效空历史。
 
-可信发布入口 `ResearchStore.record_delivery(connection, run_id, user_id, brief_id, events)` 要求已有写事务，校验完成状态、当前用户、全部来源归属与范围后才写入事件，固定交付记录不可覆盖。正式提交工具在 3.1 完成原文引用及新闻规则检查，并在同一交付事务调用此入口；本步生产应用尚无提交工具，也不会把普通文本、笔记或替身提交自动写成已交付历史。测试通过显式历史替身验证读写契约，正式历史入库联通保留给 3.1。
+可信发布入口 `ResearchStore.record_delivery(connection, run_id, user_id, brief_id, events)` 要求已有写事务，校验完成状态、当前用户、全部来源归属与范围后才写入事件，固定交付记录不可覆盖。3.1 已在正式提交存储回调的同一事务调用此入口，核对替身链路通过；生产独立核对在 3.2 接入。普通文本、笔记或原有简单提交替身不会自动写成已交付历史。
 
 `app/agent/prompts.py` 明确订阅相关性、新进展、实际价值与证据充分程度四项选题依据；要求每条有简短 selection_reason、每个未覆盖话题有原因，合并同事件多报道、比较不同版本，并在缺口/失败/定位未命中后调整行动。JSON 草稿可写到 scratch/brief.json，items 每项至少带 title/topics/selection_reason；`app/agent/research.py` 只投影这三个有界字段，由文件完成回调记录 research_selections。摘要和其他草稿字段仍保存在文件与调用记录中。事件标记 model_reported，供时间线展示模型选题说明；草稿写入及理由事件与反馈协调提交，文件落盘后反馈失败仍可复用写入意图恢复。普通笔记不产生选题说明，写草稿不代表正式提交。
 
 离线入口为 tests/test_research.py、tests/test_phase_two.py 和 tests/research_support.py；后者是标记 fixture 的固定新闻世界，生产解析、来源保存、文件读取和工具执行器仍实际运行。真实模型测试 tests/test_research_live.py 默认跳过，显式设置 NEWS_RESEARCH_LIVE=1 才用本地 DeepSeek 配置运行三个场景，每场最多 15 次模型请求、单次最多 2048 输出 tokens、外部请求只尝试一次；搜索/RSS/正文和历史均为替身，不请求真实搜索或邮件。
 
-可再设置 NEWS_RESEARCH_REPLAY=1 审计每个场景已保存的最近轨迹；审计读取原数据库、草稿和固定正文，不新增模型请求，也不改模型草稿。报告的 verification_scope 明确限于阶段 2 决策和材料读取，citation_checks 单独记录原文切片是否等于 quote。本次三份真实模型草稿均暴露引用位置与摘录不一致，原始失败 JUnit 保留，阶段 3.1 继续严格拒绝并反馈修订；提示词已补充空白/换行与位置一致的要求，该新增提示尚未重新进行真实模型引用验收。
+可再设置 NEWS_RESEARCH_REPLAY=1 审计每个场景已保存的最近轨迹；审计读取原数据库、草稿和固定正文，不新增模型请求，也不改模型草稿。报告的 verification_scope 明确限于阶段 2 决策和材料读取，citation_checks 单独记录原文切片是否等于 quote。2.6 三份真实模型草稿暴露引用位置与摘录不一致，原始失败 JUnit 保留；3.1 新规则已在记录重放中严格拒绝四处原始错误位置。提示词补充空白/换行与位置一致的要求后，尚未重新验证真实模型自行修正引用；后续按 3.2 核对修订。
+
+## 简报提交规则与保存
+
+`app/tools/submit.py` 注册第 11 个研究工具 submit_brief(draft)。模型参数只包含草稿，身份、任务、窗口、收件人、简报 ID 与核对依据均由服务端提供。`app/agent/briefs.py` 定义严格 schema：简报 title 最多 300 字符，items 最多 5 条；每条 title/summary/selection_reason 最多 300/2000/500 字符，topics 必填且最多 20 项，event_id 最多 200 字符，key_facts 为 1～10 项、每项最多 1000 字符，citations 为 1～10 项。可附 entities、product_version、event_date 供后续事件比较。
+
+每个引用仅允许 source_id、start_offset、end_offset、quote；quote 最多 2000 字符，保留原始空格与换行。source_id 采用已登记来源格式，位置为 Unicode 字符而非字节。uncovered_topics 中每项含 topic/reason，最多 20 项；新闻少于订阅条数时提供 shortfall_reason，最多 500 字符。拒绝额外字段、布尔/字符串伪整数、空白文本与模型提供的 URL、哈希、发布时间和收件人。
+
+`app/agent/brief_rules.py` 核对订阅条数、话题归属/覆盖、不足原因及敏感内容。排除词不区分大小写，检查简报标题、新闻标题/摘要/理由/事实/实体/版本/摘录，以及引用来源标题与固定正文。来源必须属于当前用户的当前任务，原文时间须为 confirmed 且位于固定窗口；网页更新或抓取时间不能代替发布日期。SourceStore 核对来源 SQL 行、元数据与候选关系，并验证正文/索引文件、UTF-8、字符数、哈希与索引；来源 ID、路径或文件问题均不能通过提交。按唯一来源缓存本次读取，合计 UTF-8 正文大小受 MAX_MATERIAL_SCAN_BYTES 限制。
+
+规则要求正文[start_offset:end_offset]与 quote 逐字符相等，不能通过修剪、模糊匹配或自动改位置接受引用。失败返回 BRIEF_RULES_REJECTED 和最多 10 个字段/问题；实际 JSON 超出结果边界时减少问题数量，保持错误码和合法完整结构。存储/材料损坏返回对应 STATE_PROBLEM；证据总量超限返回 BRIEF_EVIDENCE_TOO_LARGE。模型仍可自主重读、补查或修改，提交只扣一次 tool_calls；一次修订及独立核对预算在 3.2 接入。
+
+跨条目的相同 URL/正文哈希记录 duplicate_hints，不根据相似标题或 event_id 自动删除新闻；同条目重复引用会拒绝。空简报需覆盖全部话题及不足原因，并具备当前任务已完成的真实工具发现快照；有效零结果与依赖失败分别处理。存在未成功的搜索/抓取调用、已有候选但未取得正文、检索记录损坏时拒绝标记 no_news；后续独立核对继续判断未覆盖理由与实际证据是否一致。
+
+规则通过后调用可信 reviewer 接口，其 ReviewOutcome 必须严格符合 approved/issues 结构，批准与问题列表不可矛盾。生产尚未接入 3.2 时返回 BRIEF_REVIEW_UNAVAILABLE，AgentRunner 配对反馈后记录依赖配置失败，不产生交付记录。测试显式注入核对替身，并把 review_basis=fixture 写入确认、简报与事件；模型 schema、Settings 和页面均没有跳过核对参数。中文表达、摘要语义、上下文条件和事件重复的真实独立核对在 3.2 实施。
+
+SQLite v9 增加 submission_jobs 和 briefs。`app/storage/briefs.py` 先保存核对通过的提交意图，绑定 run/call、调用指纹、原稿、来源版本、重复线索和服务端简报 ID；最终完成回调复核材料后，在同一事务保存简报、completed/no_news 状态、事件历史、工具结果及 AgentRunner 的成对反馈。引用 URL、哈希和日期从服务端来源生成；定时邮件记录仍在 3.4 接入。本步不发送邮件。
+
+事务中断不会留下半份交付，核对意图保留以便恢复；同一调用重新读取意图时校验原稿/调用/来源，复用同一 ID 与核对结果。已经完成的调用复用结果，不重复保存历史或扣预算。意图、确认或来源版本变化明确报错；自动 Worker 接管执行中调用在 3.3，当前测试显式恢复同一调用。get(brief_id,user_id) 经运行归属查询简报，其他用户与不存在记录统一反馈不存在，保存稿件损坏返回 BRIEF_STATE_PROBLEM。
+
+离线入口为 tests/test_briefs.py。设置 NEWS_SUBMISSION_REPLAY=1 可运行 tests/test_brief_reference_replay.py，检查已保存的三场 DeepSeek 引用与两篇真实 NVIDIA 正文；不新增模型/HTTP 请求，也不改原草稿。回归草稿仅投影正式 schema 字段并提供明确标记 fixture 的标题；另外提供正确位置证明规则可通过，不表示模型已自行修正或正式摘要核对通过。报告保存在 Git 忽略的 data/acceptance/，验收范围见 acceptance.md。

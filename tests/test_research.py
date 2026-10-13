@@ -408,7 +408,9 @@ def test_v8_migration_preserves_materials_and_rolls_back(tool_env, monkeypatch):
     env = tool_env
     old = Database(env.settings.data_dir / "v7.sqlite3")
     original = database_module.SCHEMA_V8
+    submission_schema = database_module.SCHEMA_V9
     monkeypatch.setattr(database_module, "SCHEMA_V8", ())
+    monkeypatch.setattr(database_module, "SCHEMA_V9", ())
     old.initialize()
     with old.connection() as connection:
         connection.execute("PRAGMA user_version=7")
@@ -425,11 +427,15 @@ def test_v8_migration_preserves_materials_and_rolls_back(tool_env, monkeypatch):
             "SELECT name FROM sqlite_master WHERE name='run_progress'"
         ).fetchone()
     monkeypatch.setattr(database_module, "SCHEMA_V8", original)
+    monkeypatch.setattr(database_module, "SCHEMA_V9", submission_schema)
     old.initialize()
     old.initialize()
     assert runs.get_run(previous.id, "user-1") == previous
     with old.connection() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert (
+            connection.execute("PRAGMA user_version").fetchone()[0]
+            == database_module.SCHEMA_VERSION
+        )
         assert not connection.execute("PRAGMA foreign_key_check").fetchall()
 
 

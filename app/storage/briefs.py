@@ -1,0 +1,227 @@
+"""Durable checked intent, followed by atomic brief, history, result and feedback."""
+
+import json
+from typing import Literal
+from uuid import uuid4
+
+from pydantic import Field
+
+from app.agent.briefs import BriefDocument, BriefDraft, SubmitParameters
+from app.agent.research import HistoryEvent
+from app.storage.models import StateChange, StoredModel, timestamp
+from app.storage.runs import _record
+from app.storage.snapshots import SourceMetadata
+from app.tools.context import bind_context
+from app.tools.models import ToolFailure, ToolInvocation, ToolResult
+
+
+class SubmissionJob(StoredModel):
+    brief_id: str = Field(pattern=r"^brief-[a-f0-9]{32}$")
+    run_id: str
+    tool_call_id: str
+    invocation_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    review_basis: Literal["fixture", "independent"]
+    draft: BriefDraft
+    sources: tuple[SourceMetadata, ...] = Field(max_length=50)
+    duplicate_hints: tuple[dict, ...] = Field(max_length=100)
+
+    @property
+    def result(self):
+        return ToolResult.success(
+            {
+                "accepted": True,
+                "brief_id": self.brief_id,
+                "status": "completed" if self.draft.items else "no_news",
+                "review_basis": self.review_basis,
+            }
+        )
+
+
+class BriefStore:
+    def __init__(self, research, rules):
+        self.research, self.rules = research, rules
+        self.runs, self.calls, self.database = research.runs, research.calls, research.database
+
+    @staticmethod
+    def _problem():
+        raise ToolFailure("BRIEF_STATE_PROBLEM", "简报提交意图或来源版本不一致，请核查存储。")
+
+    def _job(self, row, call):
+        try:
+            job = SubmissionJob.model_validate_json(row["payload_json"])
+            arguments = SubmitParameters.model_validate_json(call.arguments)
+            fingerprint = ToolInvocation(
+                tool_call_id=call.tool_call_id, name=call.name, arguments=call.arguments
+            ).fingerprint
+            if (
+                job.run_id != call.run_id
+                or job.tool_call_id != call.tool_call_id
+                or job.invocation_hash != call.invocation_hash
+                or fingerprint != call.invocation_hash
+                or call.name != "submit_brief"
+                or job.draft != arguments.draft
+            ):
+                self._problem()
+            return job
+        except (ValueError, TypeError):
+            self._problem()
+
+    def _validate(self, context, job):
+        checked, rejected = self.rules.check(context, job.draft)
+        if (
+            rejected is not None
+            or checked.sources != job.sources
+            or checked.duplicate_hints != job.duplicate_hints
+        ):
+            self._problem()
+        return checked
+
+    def prepared(self, context, draft):
+        with self.database.connection() as connection:
+            self.runs._owned_row(connection, context.run_id, context.user_id)
+            row = connection.execute(
+                "SELECT payload_json FROM submission_jobs WHERE run_id=? AND tool_call_id=?",
+                (context.run_id, context.tool_call_id),
+            ).fetchone()
+        if row is None:
+            return None
+        call = self.calls.get_call(context.run_id, context.user_id, context.tool_call_id)
+        job = self._job(row, call)
+        if job.draft != draft:
+            self._problem()
+        self._validate(context, job)
+        return job.result
+
+    def stage(self, context, draft, checked, review_basis):
+        call = self.calls.get_call(context.run_id, context.user_id, context.tool_call_id)
+        if call.status != "executing" or call.name != "submit_brief":
+            raise PermissionError("submission intent requires an executing server-bound call")
+        job = SubmissionJob(
+            brief_id="brief-" + uuid4().hex,
+            run_id=context.run_id,
+            tool_call_id=context.tool_call_id,
+            invocation_hash=call.invocation_hash,
+            draft=draft,
+            sources=checked.sources,
+            duplicate_hints=checked.duplicate_hints,
+            review_basis=review_basis,
+        )
+        if len(job.result.model_dump_json()) > self.rules.settings.max_tool_result_chars:
+            raise ToolFailure("RESULT_TOO_LARGE", "提交确认无法容纳，请检查结果大小配置。")
+        with self.database.transaction() as connection:
+            run = self.runs._owned_row(connection, context.run_id, context.user_id)
+            if run["status"] != "running":
+                raise PermissionError("submission intent requires a running run")
+            row = connection.execute(
+                "SELECT payload_json FROM submission_jobs WHERE run_id=? AND tool_call_id=?",
+                (context.run_id, context.tool_call_id),
+            ).fetchone()
+            if row is not None:
+                saved = self._job(row, call)
+                if (
+                    saved.draft != draft
+                    or saved.sources != checked.sources
+                    or saved.review_basis != review_basis
+                ):
+                    self._problem()
+                return saved.result
+            connection.execute(
+                "INSERT INTO submission_jobs VALUES (?, ?, ?)",
+                (context.run_id, context.tool_call_id, job.model_dump_json()),
+            )
+        return job.result
+
+    def on_completed(self, connection, call):
+        if not call.result.ok:
+            self.runs._append_event(
+                connection,
+                call.run_id,
+                "brief_check_failed",
+                self.runs.now(),
+                {
+                    "tool_call_id": call.tool_call_id,
+                    "error_code": call.result.error.code,
+                    "issues": [issue.model_dump() for issue in call.result.error.details],
+                },
+            )
+            return
+        row = connection.execute(
+            "SELECT payload_json FROM submission_jobs WHERE run_id=? AND tool_call_id=?",
+            (call.run_id, call.tool_call_id),
+        ).fetchone()
+        if row is None:
+            self._problem()
+        job = self._job(row, call)
+        if call.result != job.result:
+            self._problem()
+        run = _record(
+            connection.execute("SELECT * FROM runs WHERE id=?", (call.run_id,)).fetchone()
+        )
+        context = bind_context(
+            self.runs,
+            self.rules.settings.data_dir,
+            run.id,
+            run.user_id,
+            tool_call_id=call.tool_call_id,
+        )
+        checked = self._validate(context, job)
+        at = self.runs.now()
+        self.runs._transition(connection, run, StateChange(status=job.result.data["status"]), at)
+        connection.execute(
+            "INSERT INTO briefs VALUES (?, ?, ?, ?, ?)",
+            (
+                job.brief_id,
+                run.id,
+                timestamp(at),
+                job.review_basis,
+                checked.document.model_dump_json(),
+            ),
+        )
+        if job.draft.items:
+            events = tuple(
+                HistoryEvent.model_validate_json(
+                    json.dumps(
+                        {
+                            key: value
+                            for key, value in item.model_dump(mode="json").items()
+                            if key in HistoryEvent.model_fields
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                for item in job.draft.items
+            )
+            self.research.record_delivery(connection, run.id, run.user_id, job.brief_id, events)
+        self.runs._append_event(
+            connection,
+            run.id,
+            "brief_saved",
+            at,
+            {
+                "tool_call_id": call.tool_call_id,
+                "brief_id": job.brief_id,
+                "item_count": len(job.draft.items),
+                "review_basis": job.review_basis,
+                "duplicate_hints": list(checked.duplicate_hints),
+            },
+        )
+
+    def get(self, brief_id, user_id):
+        with self.database.connection() as connection:
+            row = connection.execute(
+                "SELECT b.* FROM briefs b JOIN runs r ON r.id=b.run_id "
+                "WHERE b.id=? AND r.user_id=?",
+                (brief_id, user_id),
+            ).fetchone()
+        if row is None:
+            raise LookupError("brief not found for this user")
+        try:
+            return {
+                "brief_id": row["id"],
+                "run_id": row["run_id"],
+                "created_at": row["created_at"],
+                "review_basis": row["review_basis"],
+                "document": BriefDocument.model_validate_json(row["document_json"]),
+            }
+        except ValueError:
+            self._problem()

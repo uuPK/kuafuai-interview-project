@@ -1,7 +1,5 @@
 """Register source metadata, indices and tool feedback in the same database transaction."""
 
-from pydantic import ValidationError
-
 from app.config import Settings
 from app.providers.article import TextIndex
 from app.storage.candidates import CandidateStore
@@ -29,7 +27,19 @@ class SourceStore:
             try:
                 metadata = SourceMetadata.model_validate_json(row["metadata_json"])
                 index = TextIndex.model_validate_json(row["index_json"])
-            except ValidationError:
+                candidate = connection.execute(
+                    "SELECT run_id FROM candidates WHERE id=?", (metadata.candidate_id,)
+                ).fetchone()
+                if (
+                    metadata.source_id != source_id
+                    or metadata.run_id != run_id
+                    or metadata.url != row["url"]
+                    or metadata.content_hash != row["content_hash"]
+                    or candidate is None
+                    or candidate["run_id"] != run_id
+                ):
+                    raise ValueError("source identity or candidate relationship mismatch")
+            except ValueError:
                 raise ToolFailure(
                     "SOURCE_STATE_PROBLEM", "数据库中的来源元数据或索引不完整。"
                 ) from None

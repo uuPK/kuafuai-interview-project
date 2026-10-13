@@ -1,6 +1,6 @@
 """Versioned SQLite schema, introduced incrementally with implementation steps."""
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 SCHEMA_V1 = (
     """
@@ -273,4 +273,19 @@ SCHEMA_V8 = (
         PRIMARY KEY (brief_id, position), UNIQUE (run_id, position)
     )""",
     "CREATE INDEX delivered_history_time ON delivered_history(delivered_at, run_id)",
+)
+
+SCHEMA_V9 = (
+    """CREATE TABLE submission_jobs (
+        run_id TEXT NOT NULL, tool_call_id TEXT NOT NULL, payload_json TEXT NOT NULL,
+        PRIMARY KEY (run_id, tool_call_id),
+        FOREIGN KEY (run_id, tool_call_id) REFERENCES tool_calls(run_id, tool_call_id)
+            ON DELETE CASCADE
+    )""",
+    """CREATE TABLE briefs (
+        id TEXT PRIMARY KEY, run_id TEXT NOT NULL UNIQUE REFERENCES runs(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        review_basis TEXT NOT NULL CHECK(review_basis IN ('fixture','independent')),
+        document_json TEXT NOT NULL
+    )""",
 )

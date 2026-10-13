@@ -83,5 +83,6 @@ def test_startup_registers_basic_tools_without_starting_docker(tmp_path, monkeyp
             "bash",
             "query_history",
             "update_progress",
+            "submit_brief",
         }
         assert client.get("/health").status_code == 200

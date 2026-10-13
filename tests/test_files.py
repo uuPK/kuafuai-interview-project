@@ -439,7 +439,9 @@ def test_v6_migration_preserves_run_and_rolls_back(tmp_path, monkeypatch):
     original = database_module.SCHEMA_V7
     monkeypatch.setattr(database_module, "SCHEMA_V7", ())
     latest = database_module.SCHEMA_V8
+    submission_schema = database_module.SCHEMA_V9
     monkeypatch.setattr(database_module, "SCHEMA_V8", ())
+    monkeypatch.setattr(database_module, "SCHEMA_V9", ())
     database.initialize()
     with database.connection() as connection:
         connection.execute("PRAGMA user_version=6")
@@ -453,6 +455,7 @@ def test_v6_migration_preserves_run_and_rolls_back(tmp_path, monkeypatch):
         ).fetchone()
     monkeypatch.setattr(database_module, "SCHEMA_V7", original)
     monkeypatch.setattr(database_module, "SCHEMA_V8", latest)
+    monkeypatch.setattr(database_module, "SCHEMA_V9", submission_schema)
     database.initialize()
     database.initialize()
     with database.connection() as connection:

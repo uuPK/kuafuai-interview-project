@@ -5,12 +5,14 @@ from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.agent.brief_rules import BriefRules
 from app.api.health import router as health_router
 from app.config import Settings
 from app.providers.bocha import BochaClient
 from app.providers.deepseek import DeepSeekClient
 from app.providers.feeds import FeedCatalog, FeedClient
 from app.providers.public_http import PublicHttpClient
+from app.storage.briefs import BriefStore
 from app.storage.calls import CallStore
 from app.storage.candidates import CandidateStore
 from app.storage.conversations import ConversationStore
@@ -27,6 +29,7 @@ from app.tools.files import register_file_tools
 from app.tools.registry import ToolRegistry
 from app.tools.research import register_research
 from app.tools.search import register_search
+from app.tools.submit import register_submission
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -73,6 +76,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             research = ResearchStore(application.state.call_store, configured)
             application.state.research_store = research
             register_research(registry, research, configured)
+            briefs = BriefStore(research, BriefRules(sources, configured))
+            application.state.brief_store = briefs
+            register_submission(registry, briefs)
             application.state.tool_registry = registry
             application.state.tool_executor = ToolExecutor(
                 registry, application.state.call_store, configured
