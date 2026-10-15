@@ -453,6 +453,16 @@ Docker 官方问题库有[同类启动错误报告](https://github.com/docker/de
 
 新增配置 BASH_DATA_VOLUME、BASH_SOCKET_GID，并提供 config/rss-sources.json 的已验证 NVIDIA 来源；真实 .env 未修改，README 与用户维护文件保持原状。该步只验镜像、存储、权限和进程链路；真实供应商与邮箱未请求，5.2～5.5 继续交付与验收。
 
+## 步骤 5.2：备份恢复与 HTTPS 运维
+
+2026-10-15 新增管理员离线命令 app.ops。停写后以 SQLite backup API 保存已提交 WAL 数据，并归档 runs、source_jobs、file_jobs；.env、临时 Docker 客户端配置和测试资料不进入包。每文件记录长度与 SHA-256，限制总大小/数量，备份原子发布且不覆盖。恢复只接受空目标，逐文件校验路径、大小、哈希、特殊文件及大小写别名，再检查 SQLite 完整性、外键及版本；验证后发布材料，数据库最后发布，普通异常回滚本次移动。操作确认不会替用户停止服务，硬中断留下的目标应保留并换新空卷重试。
+
+运维与身份/静态页面/容器配置回归 80 passed、1 skipped（Windows 符号链接权限不足）；报告 tests-step-5.2.xml。包含 WAL 已提交记录、窗口/预算保持、中文文件与恢复意图、不覆盖、路径遍历/特殊文件/损坏/超限拒绝、发布中断回滚，以及 HTTPS Secure Cookie、可信代理、跨来源拒绝和伪造转发头测试。
+
+实际 Compose 演练 1 passed，55.08 秒；先停止原 API/Worker，将数据卷备份到独立主机目录，再恢复到另一新项目卷并启动健康的 API/Worker。原会话、订阅、失败任务和 scratch 笔记均读回，最后仅清理两组测试项目与其标签匹配的卷。报告 tests-step-5.2-compose.xml 和 compose-step-5.1.json 的 backup_restore 字段。演练使用假凭据，不调用外部模型或邮箱。
+
+新增 compose.https.yaml 与 config/Caddyfile.example；API 仍仅发布回环端口，只信任运维明确指定的代理 IP。官方 caddy:2 镜像在禁网容器内校验示例为 Valid configuration，日志 caddy-step-5.2.log。docs/deployment.md 给出 Linux 权限、DNS/证书/Secure Cookie、健康排查、停写备份、新卷恢复、原生迁入、升级回滚及恢复后暂缓邮件核对的具体操作。实际公网 HTTPS、证书续期和服务器防火墙没有部署环境，保持待验收。用户已提供 QQ SMTP 配置并写入本地忽略的 .env，必填校验通过；真实连接与接收结果在 5.4 执行后记录。
+
 ## 真实服务联通
 
 | 验收项 | 当前状态 | 完成条件 |

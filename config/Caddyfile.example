@@ -1,0 +1,11 @@
+# Install Caddy on the Linux host, point this domain's DNS to the server,
+# and replace news.example.com before validating/reloading the configuration.
+news.example.com {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+	}
+	reverse_proxy 127.0.0.1:8000
+}

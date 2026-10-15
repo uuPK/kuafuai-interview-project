@@ -51,6 +51,7 @@ def test_real_compose_health_restart_persistence_and_worker_bash(tmp_path):
         "project": project,
         "mode": "production image and API/Worker with fake credentials; no model/mail calls",
     }
+    restored_project = project + "-restore"
     try:
         compose("up", "-d", "--no-build", "--wait", "--wait-timeout", "90", "api", "worker")
         containers = {
@@ -136,16 +137,100 @@ def test_real_compose_health_restart_persistence_and_worker_bash(tmp_path):
             )
         )
         assert probe["bash"] == probe["isolation"] == "passed"
+        # Stop every writer before taking the DB/files snapshot. Restore to a second volume.
+        compose("stop", "api", "worker")
+        backups = tmp_path / "backups"
+        backups.mkdir()
+        compose(
+            "run",
+            "--rm",
+            "--no-deps",
+            "-T",
+            "-v",
+            f"{backups}:/backups",
+            "api",
+            "python",
+            "-m",
+            "app.ops",
+            "backup",
+            "--data-dir",
+            "/data",
+            "--archive",
+            "/backups/data.zip",
+            "--writers-stopped",
+        )
+        docker(
+            "compose",
+            "-p",
+            restored_project,
+            "run",
+            "--rm",
+            "--no-deps",
+            "-T",
+            "-v",
+            f"{backups}:/backups:ro",
+            "api",
+            "python",
+            "-m",
+            "app.ops",
+            "restore",
+            "--data-dir",
+            "/data",
+            "--archive",
+            "/backups/data.zip",
+            "--writers-stopped",
+        )
+        docker(
+            "compose",
+            "-p",
+            restored_project,
+            "up",
+            "-d",
+            "--no-build",
+            "--wait",
+            "--wait-timeout",
+            "90",
+            "api",
+            "worker",
+        )
+        with httpx.Client(
+            base_url=f"http://127.0.0.1:{port}", trust_env=False, timeout=5
+        ) as restored:
+            # Same server-side session and subscription survive restoring the whole volume.
+            restored.cookies.update(api.cookies)
+            assert restored.get("/subscription").json()["subscription"]["topics"] == ["AI"]
+            assert (
+                restored.get("/runs/" + run_id).json()["stop_reason"]
+                == "model_dependency_configuration"
+            )
+        assert (
+            docker(
+                "compose",
+                "-p",
+                restored_project,
+                "exec",
+                "-T",
+                "api",
+                "python",
+                "-c",
+                "from pathlib import Path; assert list(Path('/data/runs').glob('*/scratch/*'))",
+            )
+            is not None
+        )
+        report["backup_restore"] = (
+            "passed: stopped writers, new volume, healthy API/Worker and original session/data"
+        )
         report.update(health="passed", restart="passed", persistence="passed", probe=probe)
         target = root / "data/acceptance/compose-step-5.1.json"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     finally:
-        compose("down", "--remove-orphans", check=False)
-        # Only the new, labelled test project's volume may be removed.
-        volume = project + "-data"
-        raw = docker("volume", "inspect", volume, check=False)
-        if raw:
-            saved = json.loads(raw)[0]
-            assert saved["Labels"]["com.docker.compose.project"] == project
-            docker("volume", "rm", volume)
+        for name in (restored_project, project):
+            docker("compose", "-p", name, "down", "--remove-orphans", check=False)
+            # Only these new, labelled test projects' volumes may be removed.
+            volume = name + "-data"
+            raw = docker("volume", "inspect", volume, check=False)
+            if raw:
+                saved = json.loads(raw)[0]
+                assert saved["Labels"]["com.docker.compose.project"] == name
+                docker("volume", "rm", volume)

@@ -52,8 +52,70 @@ docker compose exec -T worker python -m app.healthcheck worker
 docker compose restart worker
 ```
 
-日志轮转为每文件 10 MB、保留 3 份。Worker 中断后的任务租约、来源快照和邮件 unknown 规则继续生效。Linux HTTPS、Secure Cookie、一致性备份/恢复及服务器操作在 5.2 继续交付。
+日志轮转为每文件 10 MB、保留 3 份。Worker 中断后的任务租约、来源快照和邮件 unknown 规则继续生效。
 
 ### 本步验收
 
 先构建两种镜像，再设置 NEWS_COMPOSE_LIVE=1 运行 tests/test_compose_live.py。用例创建带唯一名称的临时 Compose 项目、假凭据与独立卷，验证 API/Worker 健康、注册/订阅/预览、缺少模型的明确失败、实际进程退出自动重启、数据持久化，以及 Worker 内调用生产 Bash 和隔离探测。测试结束只删除本次带项目标签的测试资源，不删除默认数据卷。详细结果在 docs/acceptance.md；报告保存在 Git 忽略的 data/acceptance 中。
+
+## 5.2：Linux HTTPS 与运维
+
+在单台 Linux 服务器的本地磁盘运行 Docker/Compose，挂载 SQLite 卷；不要使用跨主机共享文件系统承载 SQLite。系统时间需同步。将项目、应用 .env 和 config 放在部署账户可访问的目录，`.env` 权限设为 600，备份媒体限制访问。Worker 可控制本机 Docker，因此部署账户及其代码应视为服务器的可信管理入口。服务器防火墙仅按实际需要开放 SSH、80、443，8000 继续只监听回环。
+
+### HTTPS
+
+使用已有域名，DNS A/AAAA 指向服务器；安装主机版 Caddy，并将 config/Caddyfile.example 的 news.example.com 改为真实域名后放到 /etc/caddy/Caddyfile。保持公网 80/443 可达，使 Caddy 自动申请和续期证书。操作前使用 `caddy validate --config /etc/caddy/Caddyfile`，通过后 `sudo systemctl reload caddy`。代理保留原始 Host 并发送 X-Forwarded-Proto；应用按同源和 CSRF 规则验证写请求。依据 [Caddy HTTPS](https://caddyserver.com/docs/automatic-https) 与 [反向代理文档](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)。
+
+应用 .env 设置 `SESSION_COOKIE_SECURE=true`。本地 HTTP 演示保持 false；Secure Cookie 仅经 HTTPS 发送。首次先创建默认网络，再读取主机代理访问容器时使用的网关 IP：
+
+```sh
+docker compose create api worker
+docker network inspect daily-ai-news_default --format '{{(index .IPAM.Config 0).Gateway}}'
+export NEWS_TRUSTED_PROXY_IP=上一步输出的精确IP
+docker compose -f compose.yaml -f compose.https.yaml up -d --no-build --force-recreate api worker
+```
+
+自定义项目名时，网络名对应 `<项目名>_default`，每条 compose 命令使用同一个 `-p`。NEWS_TRUSTED_PROXY_IP 是 shell 操作参数，不写入应用 .env。compose.https.yaml 仅使 API 信任这个精确地址的转发头；不要设置通配符。网络重建后重新确认地址。以后启动/重建 HTTPS 部署继续同时传入两份 Compose 文件；仅 stop/run 运维命令可使用基础文件。
+
+上线验收：HTTP 跳转 HTTPS、证书域名/有效期正确、注册登录与偏好保存成功、Cookie 含 Secure/HttpOnly/SameSite、跨来源写请求拒绝、外部不可直接访问 8000；随后检查 API/Worker healthy。没有实际服务器与域名时，这些公网结果记录为待部署验收。本轮以代理 ASGI 测试覆盖可信/伪造转发头、同源/跨来源和 Secure Cookie，并展开检查 HTTPS Compose 配置。
+
+### 一致性备份
+
+`python -m app.ops` 是管理员离线命令，不向模型或网页开放。停写是前提：停止全部 API/Worker 实例，确认没有原生进程仍指向同一数据目录，再执行。`--writers-stopped` 是操作确认，命令本身不会停止服务。停写期间不会自动发送邮件。备份包含 news.sqlite3、runs、source_jobs、file_jobs；正文、索引、笔记、待恢复意图和数据库保存在同一包内。SQLite 使用 [backup API](https://docs.python.org/3.13/library/sqlite3.html#sqlite3.Connection.backup)，包括已提交的 WAL 内容；不直接复制 WAL/SHM。tool_runtime、日志、测试资料和 .env 不打包。
+
+Linux 主机创建可供容器 UID 10001 写入的备份目录，并采用唯一文件名：
+
+```sh
+sudo install -d -m 700 -o 10001 -g 10001 /srv/daily-ai-news-backups
+docker compose stop api worker
+docker compose run --rm --no-deps -T -v /srv/daily-ai-news-backups:/backups api \
+  python -m app.ops backup --data-dir /data --archive /backups/2026-10-15.zip --writers-stopped
+# 只有返回 ok:true 后才将包复制到另一块磁盘或受控备份存储。
+docker compose start api worker
+```
+
+HTTPS 服务日常重启可用 start 保留既有参数；重建按上节的双文件命令。Windows Docker Desktop 可把 `-v` 前的主机路径换成实际绝对目录。原生目录备份先停止其服务，再运行 `.venv\Scripts\python.exe -m app.ops backup --data-dir data --archive E:\备份目录\唯一名称.zip --writers-stopped`。
+
+备份失败时返回固定错误码，不回显正文、路径内容或凭据；未发布的临时文件自动清理，已有备份不覆盖。包内 manifest 保存每个文件的 SHA-256 和长度。当前限制为 10 GiB、10 万文件、16 MiB manifest；遇到超限先保留原数据并评估容量。包含用户资料、研究记录、受控模型协议和邮件内容，按私有数据保管；哈希校验检测损坏，不提供来源签名或加密。.env 与 RSS 配置分别安全备份，恢复时保留原 SESSION_SECRET 才能继续使用已有会话。
+
+### 恢复与升级
+
+只恢复到新的空数据目录或空卷；命令拒绝覆盖现有数据。保留旧卷，使用新项目名 `daily-ai-news-restored` 进行演练，确保原项目已停止以释放端口：
+
+```sh
+docker compose stop api worker
+docker compose -p daily-ai-news-restored run --rm --no-deps -T \
+  -v /srv/daily-ai-news-backups:/backups:ro api \
+  python -m app.ops restore --data-dir /data --archive /backups/2026-10-15.zip --writers-stopped
+docker compose -p daily-ai-news-restored up -d --no-build --wait api worker
+```
+
+上面的启动命令适用于本地 HTTP 演练；服务器仍按 HTTPS 小节读取新网络网关，并使用双文件命令启动。恢复先在目标卷内临时目录完整校验路径、重复/特殊文件、长度、哈希、SQLite integrity_check、foreign_key_check 与版本，验证后才发布材料目录，数据库最后发布。正常异常会回滚本次发布；进程硬中断可能留下临时目录，此时保留错误现场并换新的空卷重试。不要清空含用户数据的目录来绕过检查。
+
+恢复后核对用户/订阅/历史、来源引用可读、任务窗口/预算、邮件记录和 Worker 心跳。备份后的外部副作用无法回滚：旧包里 pending 的邮件可能已被服务器接受。生产灾难恢复先在 .env 设置 `SMTP_ENABLED=false`，核对发送流水与实际邮箱后再启用；unknown 沿用显式确认规则。未完成任务保持原截止时间，超时后按原规则失败，恢复不会刷新新闻窗口。
+
+原生数据迁入 Compose：先备份原生 data，再按新空项目卷的恢复步骤导入。同版本恢复优先使用备份时对应的 Git commit/镜像；升级前备份并保存镜像标识，启动会执行有版本检查的数据库迁移，回滚时恢复旧包及旧镜像，不对新数据库直接降级。每次备份后检查退出码并定期在独立项目演练恢复；本轮已经通过两个隔离 Compose 卷之间的实际恢复验收。
+
+### 排障顺序
+
+先看 compose ps/health 和最近 100 条日志；按页面 run_id 查询任务事件，区分模型、搜索、正文、提交核对或邮件错误。检查宿主磁盘空间、Docker 引擎与网络，再确认配置字段是否齐备。不要将 .env、compose config 的完整输出、Cookie、授权码或数据库公开贴到问题记录。心跳健康不代表外部供应商可用；供应商验收结果单独记录在 docs/acceptance.md。
