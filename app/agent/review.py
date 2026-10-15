@@ -39,6 +39,8 @@ event_date、entities、product_version均为可选信息，未填不构成错�
 合并同一事件的多篇报道；URL/hash及event_id只作线索，不能单凭相同ID或标题判重复。
 与相关近期已交付事实比较：没有实质变化的事件不重复；有新版本或新增事实可以入选，
 摘要须明确说明变化且被当前正文支持。相似标题下独立的模型发布与SDK发布可以是不同事件。
+逐条比较关键事实；仅更换来源、标题、引用位置或实体标签不构成新进展。
+关键事实均已交付且没有被正文支持的新增变化时，必须拒绝对应草稿条目。
 不要补写草稿，不返回Markdown、工具调用或解释段落。批准时issues必须为空，拒绝时必须有具体问题。"""
 
 
@@ -147,6 +149,28 @@ class ReviewInput:
             )
         return selected
 
+    @staticmethod
+    def unchanged_facts(draft, history):
+        """Reject only an exact event/version/fact-set match; semantic cases stay with the model."""
+
+        def facts(values):
+            return {" ".join(value.split()).casefold() for value in values}
+
+        for i, item in enumerate(draft.items):
+            if item.product_version is None:
+                continue
+            for event in history:
+                if (
+                    item.event_id.casefold() == event["event_id"].casefold()
+                    and item.product_version.casefold()
+                    == (event["product_version"] or "").casefold()
+                    and facts(item.key_facts) == facts(event["key_facts"])
+                ):
+                    raise ReviewInputProblem(
+                        f"draft.items[{i}].key_facts",
+                        "同一事件及版本的关键事实已全部交付，请补充有正文支持的新进展或换题",
+                    )
+
     def evidence(self, context, draft, checked):
         evidence, loaded = [], {}
         versions = {meta.source_id: meta for meta in checked.sources}
@@ -252,6 +276,8 @@ class ReviewInput:
 
     def build(self, context, draft, checked):
         self.chinese(draft)
+        history = self.related_history(context, draft)
+        self.unchanged_facts(draft, history)
         run = self.research.runs.get_run(context.run_id, context.user_id)
         packet = {
             "subscription": {
@@ -264,7 +290,7 @@ class ReviewInput:
             "window_end": context.window_end.isoformat(),
             "draft": draft.model_dump(mode="json"),
             "evidence": self.evidence(context, draft, checked),
-            "related_history": self.related_history(context, draft),
+            "related_history": history,
             "history_days": self.HISTORY_DAYS,
             "duplicate_hints": list(checked.duplicate_hints),
             "allowed_issue_fields": draft_fields(draft),

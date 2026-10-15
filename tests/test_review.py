@@ -192,6 +192,39 @@ def test_related_history_is_bounded_and_never_silently_omitted(tool_env, monkeyp
     asyncio.run(run())
 
 
+@pytest.mark.parametrize(
+    "change", ["none", "reordered", "new_fact", "new_version", "other_id", "no_version"]
+)
+def test_exact_delivered_facts_rejected_but_semantic_cases_reach_reviewer(tool_env, change):
+    async def run():
+        env, model = tool_env, ReviewModel()
+        async with review_world(env, model) as world:
+            item = await draft_item(world)
+            historical = list(item["key_facts"])
+            await seed_history(env, facts=tuple(historical), event_id="atlas-v2", version="v2")
+            if change == "reordered":
+                item["key_facts"] = list(reversed(historical))
+            elif change == "new_fact":
+                item["key_facts"] = [*historical, "权重现可获取"]
+            elif change == "new_version":
+                item["product_version"] = "v3"
+            elif change == "other_id":
+                item["event_id"] = "another-event"
+            elif change == "no_version":
+                item["product_version"] = None
+            result = await run_submit(world, draft(item))
+            if change in {"none", "reordered"}:
+                assert result.error.code == "BRIEF_REVIEW_REJECTED" and not model.requests
+                assert result.error.details[0].field == "draft.items[0].key_facts"
+                assert (
+                    env.runs.get_run(env.run.id, env.run.user_id).budget_usage.model_requests == 0
+                )
+            else:
+                assert len(model.requests) == 1
+
+    asyncio.run(run())
+
+
 def test_two_failed_submissions_stop_and_batch_ids_still_pair(brief_env, response_factory):
     ready, env = brief_env, brief_env.env
     bad = deepcopy(ready.draft)
