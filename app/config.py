@@ -49,7 +49,7 @@ class Settings(BaseSettings):
 
     session_secret: SecretStr | None = Field(default=None, repr=False, exclude=True)
     session_cookie_secure: bool = False
-    session_ttl_seconds: int = Field(default=86400, ge=60)
+    session_ttl_seconds: int = Field(default=86400, ge=60, le=2_592_000)
 
     request_timeout_seconds: float = Field(default=30, gt=0, allow_inf_nan=False)
     external_max_attempts: int = Field(default=3, ge=1, le=3)

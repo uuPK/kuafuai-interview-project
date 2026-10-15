@@ -1,6 +1,6 @@
 """Versioned SQLite schema, introduced incrementally with implementation steps."""
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 SCHEMA_V1 = (
     """
@@ -329,4 +329,20 @@ SCHEMA_V12 = (
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     )""",
     "CREATE INDEX mail_outbox_status ON mail_outbox(status, created_at)",
+)
+
+SCHEMA_V13 = (
+    """CREATE TABLE auth_users (
+        id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, nickname TEXT NOT NULL,
+        password_hash TEXT NOT NULL, created_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE auth_sessions (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL, expires_at TEXT NOT NULL, CHECK(created_at < expires_at)
+    )""",
+    "CREATE INDEX auth_sessions_expiry ON auth_sessions(expires_at)",
+    """CREATE TABLE auth_attempts (
+        key_hash TEXT PRIMARY KEY, count INTEGER NOT NULL CHECK(count>0), reset_at TEXT NOT NULL
+    )""",
 )

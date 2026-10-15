@@ -5,11 +5,13 @@ from types import SimpleNamespace
 
 from app.agent.brief_rules import BriefRules
 from app.agent.review import IndependentReviewer
+from app.auth.service import AuthService
 from app.harness.trace import configure_event_logging
 from app.providers.bocha import BochaClient
 from app.providers.deepseek import DeepSeekClient
 from app.providers.feeds import FeedCatalog, FeedClient
 from app.providers.public_http import PublicHttpClient
+from app.storage.auth import AuthStore
 from app.storage.briefs import BriefStore
 from app.storage.calls import CallStore
 from app.storage.candidates import CandidateStore
@@ -37,6 +39,8 @@ async def open_runtime(configured, *, database=None):
     database = database or Database(configured.database_path)
     application = SimpleNamespace(state=SimpleNamespace(settings=configured, database=database))
     database.initialize()
+    application.state.auth_store = AuthStore(database, configured)
+    application.state.auth_service = AuthService(application.state.auth_store)
     application.state.run_store = RunStore(database, configured)
     application.state.call_store = CallStore(application.state.run_store)
     application.state.conversation_store = ConversationStore(application.state.call_store)

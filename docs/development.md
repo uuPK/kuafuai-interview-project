@@ -1,6 +1,6 @@
 # 开发与配置
 
-当前推进到步骤 3.5 的阶段验收：已串联核对反馈、重读/修订、保存响应后冷启动，以及邮件事务提交后的进程退出恢复。2026-10-15 用户重启 Docker 后，六项真实容器测试已补验通过；当前模型联通复验超时的记录保持追踪。阶段结果与宿主 IPC 启动故障定位见 acceptance.md。登录、订阅接口、页面、调度和 SMTP 按阶段 4 推进。
+当前推进到步骤 4.1 身份与会话：已接入注册、登录、退出、Argon2id 密码哈希、服务端会话及 CSRF 保护。2026-10-15 用户重启 Docker 后，六项真实容器测试已补验通过；当前模型联通复验超时的记录保持追踪。阶段结果与宿主 IPC 启动故障定位见 acceptance.md。订阅接口、页面、调度和 SMTP 按 4.2～4.5 推进。
 
 ## 本地环境
 
@@ -27,7 +27,7 @@ uv run --frozen --extra dev --cache-dir .uv-cache python -m uvicorn app.main:cre
 | DeepSeek | endpoint、key、model 从 `.env` 读取；默认关闭思考、temperature=0.2、max_tokens=4096；思考开启时读取 `DEEPSEEK_REASONING_EFFORT`（low/high/max，默认 high） |
 | 博查 | `BOCHA_SEARCH_URL` 为完整 REST 端点，`BOCHA_API_KEY` 只进入 Authorization 请求头；未配置时工具明确反馈配置缺失 |
 | SMTP | host、port、用户名/密码、发件人、TLS 模式、指定测试收件人；本地测试 SMTP 可无需认证，配置认证时须提供完整用户名/密码 |
-| 会话 | 密钥待填；填写时至少 32 字符；Secure Cookie 与有效期可配置 |
+| 会话 | `SESSION_SECRET` 至少 32 字符；缺失时认证接口返回 503；`SESSION_COOKIE_SECURE` 在 HTTPS 部署中设为 true；`SESSION_TTL_SECONDS` 为 60～2,592,000 秒，默认一天 |
 | 网络限制 | 单次超时默认 30 秒；含首请求最多尝试 3 次；重定向和下载大小限制可配置 |
 | 任务预算 | 默认模型 15、搜索 8、抓取 12、工具 50 次；10 分钟截止；模型预算至少 2 次，以容纳后续决策预留 |
 | 内容大小 | 工具结果默认 12,000 字符、模型输入默认 120,000 字符、`MAX_MODEL_RESPONSE_BYTES` 默认 2,000,000 字节；执行器、循环与 HTTP 读取分别检查 |
@@ -283,3 +283,26 @@ Remove-Item Env:NEWS_PHASE_THREE_RECORD
 ```
 
 设置 NEWS_REVIEW_LIVE=1 可独立执行 tests/test_review_live.py，核对数字、条件和真实模型修订；固定新闻与 HTTP 仍为 fixture。报告按本次 UTC 日期及 UUID 保存到 data/acceptance/review-live-<日期>/，保留先前日期目录。真实服务和 Docker 的实际结果、限制及阶段目标核对见 acceptance.md；未通过的联通不能计为验收成功。
+
+## 身份与会话
+
+4.1 的 JSON 入口为 `app/api/auth.py`，启动时由 `app/main.py` 注册；`app/runtime.py` 装配 AuthStore/AuthService，API 与 Worker 继续共用资源生命周期。用户身份由服务端生成和解析，客户端不能提交 user_id 或 role。`current_user` 是后续任务、简报和订阅接口的身份依赖，`require_csrf` 用于写请求；本步尚未开放 4.2 的资源接口。
+
+| 接口 | 输入与行为 |
+| --- | --- |
+| `GET /auth/session` | 返回 authenticated、当前 user 或 null，以及 csrf_token；匿名时设置 10 分钟 bootstrap Cookie，已登录时保留固定到期时间 |
+| `POST /auth/register` | JSON email/password/nickname；创建账户并登录，成功 201；邮箱重复返回 409 |
+| `POST /auth/login` | JSON email/password；成功 200，轮换当前浏览器旧会话；不存在账户和密码错误统一返回 401 INVALID_CREDENTIALS |
+| `POST /auth/logout` | JSON 空对象；要求有效身份和 CSRF，删除当前会话并清除 Cookie，成功 200 |
+
+先调用 `/auth/session` 取得 csrf_token，三个 POST 都在 `X-CSRF-Token` 请求头携带它；登录/注册成功后使用响应中新令牌。CSRF 由会话密钥按用途分开计算 HMAC，匿名时绑定随机 nonce 与时间戳，登录后绑定当前会话。`Sec-Fetch-Site: cross-site` 被拒绝；存在 Origin 时精确校验协议、主机和有效端口，无 Origin 的客户端仍必须通过 CSRF。令牌仅从请求头读取，拒绝查询参数替代；无跨域授权配置。
+
+注册和登录只接受 4,096 字节以内的 application/json，拒绝重复 JSON 键、非有限数、无效或过深 JSON 及额外字段。邮箱由 email-validator 校验为 ASCII 地址并统一大小写，不发 DNS/验证邮件；密码为 12～128 字符，昵称为去空白后 1～100 字符并拒绝码点小于 32 的控制字符。密码使用 SecretStr，排除 repr 和序列化；输入错误只返回受控字段/错误类型，不回显输入。所有 `/auth/` 响应均设置 no-store 和 nosniff。
+
+密码实现为 `app/auth/security.py`，使用 [argon2-cffi 的 RFC_9106_LOW_MEMORY 参数](https://argon2-cffi.readthedocs.io/en/stable/api.html)：Argon2id、64 MiB、3 次迭代、并行度 4，每次生成随机盐；成功登录时按当前配置判断是否重哈希。未知账户执行 dummy 哈希校验。Argon2 在工作线程中执行，每个运行时最多两个并发，且不占 SQLite 写事务；限流先于哈希，避免慢计算长期占锁。
+
+SQLite v13 增加 auth_users、auth_sessions 和 auth_attempts。账户邮箱唯一，密码只保存 Argon2id 哈希；会话使用 32 字节随机令牌，数据库只保存按用途区分的 HMAC 摘要与到期时间。账户/会话创建、旧会话撤销和重哈希各在短事务中原子完成；登录提交前再次校验读取的密码哈希，防止基于旧凭据签发会话。过期或退出的令牌失效，重启服务可继续有效会话；更换 SESSION_SECRET 后旧会话和 CSRF 均失效。
+
+注册和登录共用持久尝试计数：每个来源地址与邮箱组合每 5 分钟最多 5 次，同一来源地址合计最多 30 次，包括成功尝试；超出返回 429 和 Retry-After。来源取 ASGI request.client，不信任任意客户端转发头。Cookie 名为 news_session/news_auth_bootstrap，均为 HttpOnly、SameSite=Lax、Path=/、不设 Domain，Secure 由 SESSION_COOKIE_SECURE 控制。会话固定有效期默认一天，GET 不延长；HTTPS 部署须设 Secure=true。参考 [OWASP 会话管理](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)与 [CSRF 防护](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html)。
+
+SESSION_SECRET 缺失时 `/auth/` 返回 503 AUTH_UNAVAILABLE，健康检查仍可响应。2026-10-15 本地缺失的密钥已随机生成到被 Git 忽略的 `.env`，保留其他配置，不写入日志或验收报告；配置改变后重启生效。没有新增模型工具，认证资料不进入模型输入、工具结果或 Bash 环境。测试入口为 `tests/test_auth.py` 和 `tests/test_auth_storage.py`；浏览器页面在 4.3 接入，当前接口级验收不代表页面端到端完成。

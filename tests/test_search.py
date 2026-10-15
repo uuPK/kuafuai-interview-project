@@ -489,6 +489,7 @@ def test_v5_migration_preserves_v4_runs_and_rolls_back_failure(tool_env, monkeyp
     monkeypatch.setattr(database_module, "SCHEMA_V8", ())
     monkeypatch.setattr(database_module, "SCHEMA_V11", ())
     monkeypatch.setattr(database_module, "SCHEMA_V12", ())
+    monkeypatch.setattr(database_module, "SCHEMA_V13", ())
     monkeypatch.setattr(database_module, "SCHEMA_V10", ())
     monkeypatch.setattr(database_module, "SCHEMA_V9", ())
     monkeypatch.setattr(database_module, "SCHEMA_VERSION", 4)

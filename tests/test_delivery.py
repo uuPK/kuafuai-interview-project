@@ -250,6 +250,9 @@ def test_v12_migration_is_atomic_and_preserves_existing_brief(brief_env, monkeyp
     before = ready.store.get(result.data["brief_id"], "user-1")
     with env.database.connection() as connection:
         connection.execute("DROP TABLE mail_outbox")
+        connection.execute("DROP TABLE auth_sessions")
+        connection.execute("DROP TABLE auth_users")
+        connection.execute("DROP TABLE auth_attempts")
         connection.execute("PRAGMA user_version=11")
     schema = database_module.SCHEMA_V12
     monkeypatch.setattr(database_module, "SCHEMA_V12", (*schema, "INVALID SQL"))
