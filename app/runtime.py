@@ -15,12 +15,15 @@ from app.storage.auth import AuthStore
 from app.storage.briefs import BriefStore
 from app.storage.calls import CallStore
 from app.storage.candidates import CandidateStore
+from app.storage.catalog import CatalogStore
 from app.storage.conversations import ConversationStore
 from app.storage.database import Database
 from app.storage.materials import MaterialStore
+from app.storage.outbox import OutboxStore
 from app.storage.research import ResearchStore
 from app.storage.runs import RunStore
 from app.storage.sources import SourceStore
+from app.storage.subscriptions import SubscriptionStore
 from app.storage.timeline import TimelineStore
 from app.tools.bash import register_bash
 from app.tools.executor import ToolExecutor
@@ -42,6 +45,8 @@ async def open_runtime(configured, *, database=None):
     application.state.auth_store = AuthStore(database, configured)
     application.state.auth_service = AuthService(application.state.auth_store)
     application.state.run_store = RunStore(database, configured)
+    subscriptions = SubscriptionStore(application.state.run_store, configured)
+    application.state.subscription_store = subscriptions
     application.state.call_store = CallStore(application.state.run_store)
     application.state.conversation_store = ConversationStore(application.state.call_store)
     async with AsyncExitStack() as stack:
@@ -78,10 +83,17 @@ async def open_runtime(configured, *, database=None):
         research = ResearchStore(application.state.call_store, configured)
         application.state.research_store = research
         register_research(registry, research, configured)
-        briefs = BriefStore(research, BriefRules(sources, configured))
+        briefs = BriefStore(
+            research,
+            BriefRules(sources, configured),
+            outbox=OutboxStore(
+                application.state.run_store, delivery_enabled=subscriptions.delivery_enabled
+            ),
+        )
         application.state.brief_store = briefs
         application.state.outbox_store = briefs.outbox
         application.state.timeline_store = TimelineStore(application.state.run_store)
+        application.state.catalog_store = CatalogStore(research, briefs, configured)
         reviewer = IndependentReviewer(model, research, sources, configured)
         application.state.brief_reviewer = reviewer
         register_submission(registry, briefs, reviewer=reviewer)

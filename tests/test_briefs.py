@@ -562,10 +562,12 @@ def test_v9_migration_rolls_back_and_is_idempotent(tmp_path, monkeypatch):
     worker_schema = database_module.SCHEMA_V11
     delivery_schema = database_module.SCHEMA_V12
     auth_schema = database_module.SCHEMA_V13
+    product_schema = database_module.SCHEMA_V14
     review_schema = database_module.SCHEMA_V10
     monkeypatch.setattr(database_module, "SCHEMA_V11", ())
     monkeypatch.setattr(database_module, "SCHEMA_V12", ())
     monkeypatch.setattr(database_module, "SCHEMA_V13", ())
+    monkeypatch.setattr(database_module, "SCHEMA_V14", ())
     monkeypatch.setattr(database_module, "SCHEMA_V10", ())
     monkeypatch.setattr(database_module, "SCHEMA_V9", ())
     db.initialize()
@@ -584,6 +586,7 @@ def test_v9_migration_rolls_back_and_is_idempotent(tmp_path, monkeypatch):
     monkeypatch.setattr(database_module, "SCHEMA_V11", worker_schema)
     monkeypatch.setattr(database_module, "SCHEMA_V12", delivery_schema)
     monkeypatch.setattr(database_module, "SCHEMA_V13", auth_schema)
+    monkeypatch.setattr(database_module, "SCHEMA_V14", product_schema)
     db.initialize()
     db.initialize()
     with db.connection() as connection:
@@ -790,6 +793,7 @@ def test_v9_upgrade_preserves_sources_history_and_progress(brief_env):
             ),
         )
         connection.execute("DROP TABLE mail_outbox")
+        connection.execute("DROP TABLE subscriptions")
         connection.execute("DROP TABLE auth_sessions")
         connection.execute("DROP TABLE auth_users")
         connection.execute("DROP TABLE auth_attempts")

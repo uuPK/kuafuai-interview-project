@@ -39,6 +39,10 @@ class SubmissionJob(StoredModel):
         )
 
 
+class BriefNotFoundError(LookupError):
+    """Unknown and foreign briefs share one public outcome."""
+
+
 class BriefStore:
     def __init__(self, research, rules, *, outbox=None):
         self.research, self.rules = research, rules
@@ -275,7 +279,7 @@ class BriefStore:
                 (brief_id, user_id),
             ).fetchone()
         if row is None:
-            raise LookupError("brief not found for this user")
+            raise BriefNotFoundError("brief not found for this user")
         try:
             return {
                 "brief_id": row["id"],

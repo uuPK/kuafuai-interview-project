@@ -1,4 +1,4 @@
-"""Bound auth JSON input before parsing, and keep credentials out of validation output."""
+"""Bound API JSON input before parsing, and keep private responses out of caches."""
 
 import json
 
@@ -18,12 +18,18 @@ def invalid_constant(value):
     raise ValueError("non-finite JSON")
 
 
-class AuthBoundary:
+class ApiBoundary:
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or not scope["path"].startswith("/auth/"):
+        path = scope.get("path", "")
+        is_auth = path.startswith("/auth/")
+        is_product = any(
+            path == prefix or path.startswith(prefix + "/")
+            for prefix in ("/me", "/subscription", "/runs", "/briefs")
+        )
+        if scope["type"] != "http" or not (is_auth or is_product):
             return await self.app(scope, receive, send)
         original_send = send
 
@@ -35,7 +41,7 @@ class AuthBoundary:
             await original_send(message)
 
         send = protected_send
-        if scope["method"] == "POST":
+        if scope["method"] in {"POST", "PUT", "PATCH"}:
             headers = dict(scope["headers"])
             if (
                 headers.get(b"content-type", b"").split(b";")[0].strip().lower()
@@ -50,7 +56,7 @@ class AuthBoundary:
                 if message["type"] == "http.disconnect":
                     return
                 chunk = message.get("body", b"")
-                if len(body) + len(chunk) > 4096:
+                if len(body) + len(chunk) > (4096 if is_auth else 131_072):
                     return await JSONResponse({"error": {"code": "BODY_TOO_LARGE"}}, 413)(
                         scope, receive, send
                     )

@@ -101,33 +101,39 @@ class RunStore:
     def create_run(self, request: RunRequest, *, now: datetime | None = None) -> RunRecord:
         request = RunRequest.model_validate(request)
         created = self.now(now)
+        with self.database.transaction() as connection:
+            return self._create_run(connection, request, created)
+
+    def _create_run(self, connection, request, created):
+        """Share the transaction with the live subscription snapshot read."""
+        if not connection.in_transaction:
+            raise ValueError("run creation requires a transaction")
         window_end = request.scheduled_for if request.scheduled_for is not None else created
         run_id = str(uuid4())
-        with self.database.transaction() as connection:
-            connection.execute(
-                """INSERT INTO runs (
+        connection.execute(
+            """INSERT INTO runs (
                     id, user_id, subscription_id, mode, status, subscription_json,
                     budget_limits_json, budget_usage_json, created_at, updated_at,
                     scheduled_for, window_start, window_end
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    run_id,
-                    request.user_id,
-                    request.subscription_id,
-                    request.mode,
-                    RunStatus.QUEUED,
-                    request.subscription.model_dump_json(),
-                    self.budget_limits.model_dump_json(),
-                    BudgetUsage().model_dump_json(),
-                    timestamp(created),
-                    timestamp(created),
-                    timestamp(request.scheduled_for) if request.scheduled_for is not None else None,
-                    timestamp(window_end - timedelta(hours=24)),
-                    timestamp(window_end),
-                ),
-            )
-            self._append_event(connection, run_id, "run_created", created, {"mode": request.mode})
-            return _record(self._owned_row(connection, run_id, request.user_id))
+            (
+                run_id,
+                request.user_id,
+                request.subscription_id,
+                request.mode,
+                RunStatus.QUEUED,
+                request.subscription.model_dump_json(),
+                self.budget_limits.model_dump_json(),
+                BudgetUsage().model_dump_json(),
+                timestamp(created),
+                timestamp(created),
+                timestamp(request.scheduled_for) if request.scheduled_for is not None else None,
+                timestamp(window_end - timedelta(hours=24)),
+                timestamp(window_end),
+            ),
+        )
+        self._append_event(connection, run_id, "run_created", created, {"mode": request.mode})
+        return _record(self._owned_row(connection, run_id, request.user_id))
 
     def get_run(self, run_id: str, user_id: str) -> RunRecord:
         with self.database.connection() as connection:

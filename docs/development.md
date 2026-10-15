@@ -1,6 +1,6 @@
 # 开发与配置
 
-当前推进到步骤 4.1 身份与会话：已接入注册、登录、退出、Argon2id 密码哈希、服务端会话及 CSRF 保护。2026-10-15 用户重启 Docker 后，六项真实容器测试已补验通过；当前模型联通复验超时的记录保持追踪。阶段结果与宿主 IPC 启动故障定位见 acceptance.md。订阅接口、页面、调度和 SMTP 按 4.2～4.5 推进。
+当前推进到步骤 4.2 订阅与预览接口：登录身份已接入资料、订阅、预览任务、历史简报和安全时间线，预览只保存排队任务并交给 Worker。2026-10-15 用户重启 Docker 后，六项真实容器测试已补验通过；当前模型联通复验超时的记录保持追踪。阶段结果与宿主 IPC 启动故障定位见 acceptance.md。页面、调度和 SMTP 按 4.3～4.5 推进。
 
 ## 本地环境
 
@@ -13,7 +13,7 @@ uv sync --frozen --extra dev --cache-dir .uv-cache
 uv run --frozen --extra dev --cache-dir .uv-cache python -m uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-启动后请求 `GET http://127.0.0.1:8000/health`，成功响应为 `{"status":"ok"}`。启动过程初始化 SQLite；DeepSeek、博查分别在配置齐全时建立异步客户端，并建立公开网页客户端，关闭应用时释放连接。启动与健康接口均不发送真实服务请求，健康响应只代表进程可响应。API 与 Worker 通过 `app/runtime.py` 共用资源装配逻辑；研究任务的公开 API 按后续步骤加入。
+启动后请求 `GET http://127.0.0.1:8000/health`，成功响应为 `{"status":"ok"}`。启动过程初始化 SQLite；DeepSeek、博查分别在配置齐全时建立异步客户端，并建立公开网页客户端，关闭应用时释放连接。启动与健康接口均不发送真实服务请求，健康响应只代表进程可响应。API 与 Worker 通过 `app/runtime.py` 共用资源装配逻辑；产品接口见本文“订阅、预览与历史接口”。
 
 ## 配置读取与边界
 
@@ -256,7 +256,7 @@ SQLite v11 增加 worker_instances 和 run_leases，原子升级保留既有任�
 
 SQLite v12 增加 mail_outbox，以 brief_id 为主键、run_id 为唯一键，保存固定 recipient/subject/body_text、内容哈希、status、attempts 及创建/更新时间。3.4 只创建 pending/0 次的记录，schema 预留 pending/sending/sent/failed/unknown。邮件正文从已保存的 BriefDocument 生成，包含中文标题/摘要、入选理由、服务端来源链接、固定新闻窗口和不足/未覆盖说明；有效空简报同样可入队，研究失败不能入队。邮箱只接受单个 ASCII 地址并拒绝换行、多收件人和显示名称，主题合并空白避免注入邮件头。
 
-预览任务保存内容后结束；定时任务入队前检查订阅快照开关。`OutboxStore(runs, delivery_enabled=...)` 可注入可信同步检查函数，参数为当前事务 connection 和 run，必须明确返回 bool；阶段 4 的实时订阅存储通过这里执行暂停检查。当前生产默认读取固定快照，实时订阅表/接口尚待 4.2，发送前再次检查在 4.5 接入。关闭时保留研究内容并记录 mail_suppressed，不创建发送记录。记录查询 `outbox_store.get(brief_id,user_id)` 校验用户归属与内容哈希，属于可信发送器接口，不能整体暴露给模型或页面。数据库升级保留已有简报；待发送记录由升级后的新提交事务创建。
+预览任务保存内容后结束；定时任务入队前检查订阅快照开关。`OutboxStore(runs, delivery_enabled=...)` 可注入可信同步检查函数，参数为当前事务 connection 和 run，必须明确返回 bool。4.2 的共享运行时已接入 SubscriptionStore.delivery_enabled，在同一交付事务中按 run 的用户和订阅 ID 读取实时开关；缺失记录不授权发送，损坏记录明确报错。关闭时保留研究内容并记录 mail_suppressed，不创建发送记录。发送前再次检查及实际 SMTP 在 4.5 接入。记录查询 `outbox_store.get(brief_id,user_id)` 校验用户归属与内容哈希，属于可信发送器接口，不能整体暴露给模型或页面。数据库升级保留已有简报；待发送记录由升级后的新提交事务创建。
 
 `app/storage/timeline.py` 提供 `timeline_store.page(run_id,user_id,after_id=0,limit=50)`，cursor 为最后事件 ID，limit 接受严格整数 1～100，返回当前状态、停止原因、events、next_after_id 和 has_more。按 ID 稳定排序和分页，缺失任务与其他用户任务统一返回不存在。runtime 同时装配 outbox_store 和 timeline_store，供后续已认证的 API 调用；本步不新增未认证任务接口。
 
@@ -286,7 +286,7 @@ Remove-Item Env:NEWS_PHASE_THREE_RECORD
 
 ## 身份与会话
 
-4.1 的 JSON 入口为 `app/api/auth.py`，启动时由 `app/main.py` 注册；`app/runtime.py` 装配 AuthStore/AuthService，API 与 Worker 继续共用资源生命周期。用户身份由服务端生成和解析，客户端不能提交 user_id 或 role。`current_user` 是后续任务、简报和订阅接口的身份依赖，`require_csrf` 用于写请求；本步尚未开放 4.2 的资源接口。
+4.1 的 JSON 入口为 `app/api/auth.py`，启动时由 `app/main.py` 注册；`app/runtime.py` 装配 AuthStore/AuthService，API 与 Worker 继续共用资源生命周期。用户身份由服务端生成和解析，客户端不能提交 user_id 或 role。4.2 的任务、简报和订阅接口复用 `current_user` 身份依赖与 `require_csrf` 写请求保护。
 
 | 接口 | 输入与行为 |
 | --- | --- |
@@ -306,3 +306,45 @@ SQLite v13 增加 auth_users、auth_sessions 和 auth_attempts。账户邮箱唯
 注册和登录共用持久尝试计数：每个来源地址与邮箱组合每 5 分钟最多 5 次，同一来源地址合计最多 30 次，包括成功尝试；超出返回 429 和 Retry-After。来源取 ASGI request.client，不信任任意客户端转发头。Cookie 名为 news_session/news_auth_bootstrap，均为 HttpOnly、SameSite=Lax、Path=/、不设 Domain，Secure 由 SESSION_COOKIE_SECURE 控制。会话固定有效期默认一天，GET 不延长；HTTPS 部署须设 Secure=true。参考 [OWASP 会话管理](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)与 [CSRF 防护](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html)。
 
 SESSION_SECRET 缺失时 `/auth/` 返回 503 AUTH_UNAVAILABLE，健康检查仍可响应。2026-10-15 本地缺失的密钥已随机生成到被 Git 忽略的 `.env`，保留其他配置，不写入日志或验收报告；配置改变后重启生效。没有新增模型工具，认证资料不进入模型输入、工具结果或 Bash 环境。测试入口为 `tests/test_auth.py` 和 `tests/test_auth_storage.py`；浏览器页面在 4.3 接入，当前接口级验收不代表页面端到端完成。
+
+## 订阅、预览与历史接口
+
+4.2 入口为 `app/api/product.py`。全部接口通过登录 Cookie 取得当前用户，PUT/POST 还要求当前会话的 X-CSRF-Token。`app/api/boundary.py` 由原认证中间件扩展，认证仍限制 4,096 字节，产品写请求限制 131,072 字节，只接受严格 JSON；重复键、非有限数和过深 JSON 被拒绝。全部私有响应设置 no-store/nosniff，不启用跨域访问。
+
+| 接口 | 请求与响应 |
+| --- | --- |
+| `GET /me` | 返回 user 的服务端 ID、登录邮箱、昵称和创建时间 |
+| `PUT /me` | 完整 JSON email/nickname；更新当前账户资料，邮箱也作为下次登录名；重复邮箱返回 409 ACCOUNT_EXISTS |
+| `GET /subscription` | 返回 subscription；未设置时为 null |
+| `PUT /subscription` | 完整偏好 JSON，保存每人唯一的一份订阅，保留原订阅 ID 和创建时间 |
+| `POST /runs` | JSON 空对象，成功 202，返回 run_id/reused；只登记预览，不执行研究或等待模型 |
+| `GET /runs` | 当前用户任务列表，返回 items/next_cursor |
+| `GET /runs/{run_id}` | 状态、固定窗口、预算、重试/停止原因、订阅快照、模型进度和已保存 brief_id |
+| `GET /runs/{run_id}/events` | 复用安全时间线，以 after_id/limit 分页，不返回受控完整协议 |
+| `GET /briefs` | 当前用户已完成的预览/定时简报摘要，包含标题、条数、review_basis 和关联任务 |
+| `GET /briefs/{brief_id}` | 已保存简报正文、来源链接、引用范围及核对依据；空简报同样可查询 |
+
+订阅输入示例：
+
+```json
+{
+  "topics": ["开源模型", "AI芯片"],
+  "keywords": ["开源"],
+  "exclude_keywords": ["广告"],
+  "max_items": 5,
+  "enabled": true,
+  "push_time": "09:00"
+}
+```
+
+topics 必填 1～20 项，keywords/exclude_keywords 各最多 100 项，每项去首尾空白后 1～120 字符，拒绝不可打印字符和同列表大小写重复。max_items 为严格整数 1～5，enabled 为严格 bool，push_time 为北京时间的 ASCII HH:mm；默认分别为 5/true/09:00。PUT 为完整替换，未提供的可选项恢复默认值。昵称为去首尾空白后的 1～100 个可打印字符，邮箱沿用注册的 ASCII 校验与大小写归一化。拒绝额外字段、伪造身份、收件人、定时模式或预算；配置凭据及常见 sk- 形式凭据不能保存为资料/偏好。失败只返回受控错误码和字段类型，不回显输入。
+
+SQLite v14 增加 subscriptions，user_id 唯一且关联 auth_users。预览在同一 BEGIN IMMEDIATE 事务读取当前账户、订阅、开关和已有活动预览，再调用 RunStore._create_run 保存固定快照、过去 24 小时窗口及创建事件；入库失败全部回滚。当前用户已有 queued/running/waiting_retry 预览时复用它，返回 reused=true，原窗口、预算和偏好不变；终态后可以创建新的预览。订阅未设置或已暂停时分别返回 409 SUBSCRIPTION_REQUIRED/SUBSCRIPTION_DISABLED。暂停阻止新预览和后续新邮件入队，已创建任务保留原研究快照。
+
+资料/偏好更新只影响以后创建的任务，当前任务的昵称、邮箱、话题和收件地址保持快照；修改邮箱后使用新邮箱登录。实时开关检查只决定交付资格，不重写原收件人或稿件。已有 pending 邮件的发送前检查、调度时间重算和自动补跑分别按 4.5/4.4 实施，本步保存 push_time 尚不触发定时任务。
+
+列表默认每页 20、最多 50，按 created_at/id 倒序做键集分页；next_cursor 由 SESSION_SECRET 签名并绑定当前用户和 runs/briefs 集合，不可跨用户、集合或篡改复用。时间线默认 50、最多 100，after_id 为 0～SQLite 有符号 64 位上限。拒绝未知或重复查询参数；无效游标返回 422 INVALID_CURSOR。其他用户与不存在的任务/简报统一返回 404 NOT_FOUND。损坏的订阅、任务、简报或事件返回对应 STATE_PROBLEM/409，不解释为空历史。
+
+`app/storage/catalog.py` 只投影产品所需字段，任务和历史均按用户查询；时间线复用白名单投影，完整模型响应、reasoning_content、工具参数/结果原文、正文目录及执行令牌均不公开。简报列表只返回摘要，详情才返回完整已接受文档；外部标题仍是 JSON 文本，4.3 页面负责转义和安全链接渲染。配置凭据继续在输出前脱敏。
+
+API 与独立 Worker 使用同一 DATA_DIR。运行 `python -m app.worker` 持续领取排队任务，或 `python -m app.worker --once` 最多处理一个任务；API 本身不启动研究执行器。无 Worker 时任务保持 queued，缺失模型配置时 Worker 明确保存依赖失败。离线测试通过实际 API、重新装配的 Worker、生产搜索/提交存储与显式模型/搜索/核对替身走通 no_news 简报并从历史读回；它不代表真实模型新闻质量验收。测试入口为 `tests/test_product_api.py` 和 `tests/test_subscriptions.py`，实际服务未完成项见 acceptance.md。
