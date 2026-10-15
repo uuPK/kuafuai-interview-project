@@ -164,6 +164,7 @@ def test_migrated_subscription_bootstrap_and_schema_rollback(client, monkeypatch
 
 def test_worker_maintenance_schedules_before_claiming(client):
     import asyncio
+
     from app.agent.runner import AgentRunner
     from app.worker.__main__ import UnconfiguredModel
     from app.worker.service import Worker
