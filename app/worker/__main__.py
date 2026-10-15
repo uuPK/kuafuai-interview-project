@@ -24,8 +24,13 @@ async def run(once=False, settings=None):
             runtime.conversation_store,
             runtime.settings,
         )
+
+        async def maintenance():
+            await asyncio.to_thread(runtime.schedule_store.tick)
+
         worker = Worker(
             runner,
+            maintenance=maintenance,
             recovery=Recovery(
                 runner, sources=runtime.source_store, materials=runtime.material_store
             ),

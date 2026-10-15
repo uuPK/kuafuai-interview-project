@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from app.api.auth import router as auth_router
 from app.api.boundary import ApiBoundary
 from app.api.health import router as health_router
+from app.api.pages import router as pages_router
 from app.api.product import router as product_router
 from app.auth.models import AuthError
 from app.config import Settings
@@ -94,4 +95,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(health_router)
     application.include_router(auth_router)
     application.include_router(product_router)
+    application.include_router(pages_router)
     return application

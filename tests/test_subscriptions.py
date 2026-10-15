@@ -156,6 +156,8 @@ def test_v14_upgrade_failure_preserves_account_session_and_run(client, monkeypat
     account = client.get("/me").json()["user"]
     before = state.run_store.get_run(run_id, account["id"])
     with state.database.connection() as connection:
+        for table in ("schedule_notices", "subscription_schedules", "scheduled_runs"):
+            connection.execute(f"DROP TABLE {table}")
         connection.execute("DROP TABLE subscriptions")
         connection.execute("PRAGMA user_version=13")
     statements = database_module.SCHEMA_V14

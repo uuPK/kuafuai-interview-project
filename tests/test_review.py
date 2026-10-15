@@ -423,6 +423,8 @@ def test_v10_migration_preserves_briefs_and_rolls_back(brief_env, monkeypatch):
     before = ready.store.get(result.data["brief_id"], "user-1")
     with db.connection() as connection:
         connection.execute("DROP TABLE mail_outbox")
+        for table in ("schedule_notices", "subscription_schedules", "scheduled_runs"):
+            connection.execute(f"DROP TABLE {table}")
         connection.execute("DROP TABLE subscriptions")
         connection.execute("DROP TABLE auth_sessions")
         connection.execute("DROP TABLE auth_users")

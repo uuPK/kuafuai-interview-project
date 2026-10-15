@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 
 
 class Worker:
-    def __init__(self, runner, *, recovery=None, worker_id=None):
+    def __init__(self, runner, *, recovery=None, worker_id=None, maintenance=None):
         self.runner, self.settings = runner, runner.settings
         self.leases = LeaseStore(runner.runs, self.settings)
         self.recovery = recovery or Recovery(runner)
@@ -21,6 +21,7 @@ class Worker:
             raise ValueError("worker recovery and runner must share their stores")
         self.worker_id = worker_id or uuid4().hex
         self.lock = asyncio.Lock()
+        self.maintenance = maintenance
 
     async def _execute(self, lease):
         with execution_scope(self.leases.execution(lease)):
@@ -58,6 +59,8 @@ class Worker:
     async def run_once(self):
         async with self.lock:
             self.leases.touch_worker(self.worker_id)
+            if self.maintenance is not None:
+                await self.maintenance()
             lease = self.leases.claim_next(self.worker_id)
             if lease is None:
                 return None

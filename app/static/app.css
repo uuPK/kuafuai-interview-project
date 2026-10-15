@@ -1,0 +1,377 @@
+:root {
+  font-family: Inter, "Microsoft YaHei", system-ui, sans-serif;
+  color: #20332f;
+  background: #f4f6f2;
+  font-synthesis: none;
+  line-height: 1.65;
+  --green: #186653;
+  --line: #dce4dc;
+  --muted: #62736c;
+}
+* {
+  box-sizing: border-box;
+}
+[hidden] {
+  display: none !important;
+}
+body {
+  margin: 0;
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+  border: 1px solid var(--green);
+  border-radius: 8px;
+  padding: 0.55rem 1rem;
+  background: var(--green);
+  color: white;
+  font-weight: 600;
+}
+button:hover {
+  filter: brightness(0.93);
+}
+button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+.secondary {
+  color: var(--green);
+  background: #eef5ef;
+}
+.quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--green);
+  padding: 0.35rem 0.65rem;
+}
+a {
+  color: var(--green);
+  overflow-wrap: anywhere;
+}
+.topbar {
+  max-width: 1360px;
+  margin: auto;
+  padding: 1.2rem 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+}
+.brand {
+  text-decoration: none;
+  font-weight: 650;
+  color: #20332f;
+}
+.brand strong {
+  color: var(--green);
+}
+#account-bar {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+main {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 1.5rem 1.5rem 3rem;
+}
+h1 {
+  font-size: clamp(1.65rem, 3vw, 2.35rem);
+  line-height: 1.3;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  margin: 0.4rem 0 1rem;
+}
+h2 {
+  font-size: 1.15rem;
+  margin: 0 0 1rem;
+}
+h3 {
+  font-size: 1rem;
+  margin: 1.4rem 0 0.5rem;
+}
+.eyebrow {
+  color: var(--green);
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  font-weight: 650;
+  margin: 0.3rem 0;
+}
+.muted,
+small {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+small {
+  display: block;
+  margin-top: 0.3rem;
+}
+p {
+  overflow-wrap: anywhere;
+}
+.card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1.4rem;
+  margin-bottom: 1.2rem;
+  box-shadow: 0 4px 16px #24443004;
+}
+.welcome {
+  max-width: 570px;
+  margin: 3rem auto;
+}
+.welcome form {
+  max-width: 400px;
+}
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1.4rem 0;
+}
+form {
+  display: grid;
+  gap: 0.9rem;
+}
+label {
+  display: block;
+  font-size: 0.88rem;
+  font-weight: 550;
+}
+input:not([type="checkbox"]),
+textarea,
+select {
+  width: 100%;
+  border: 1px solid #c7d3c9;
+  background: #fbfcfa;
+  border-radius: 7px;
+  padding: 0.55rem 0.65rem;
+  margin-top: 0.35rem;
+  color: inherit;
+}
+textarea {
+  resize: vertical;
+}
+input:focus,
+textarea:focus,
+select:focus,
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid #a6d1bd;
+  outline-offset: 2px;
+}
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+.check input {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--green);
+}
+.page-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2rem;
+  padding: 0.8rem 0 1.8rem;
+}
+.workspace {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 1.4rem;
+}
+.content {
+  min-width: 0;
+}
+.section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.section-title h2 {
+  margin: 0;
+}
+.rows {
+  margin: 0.6rem 0;
+}
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  border-top: 1px solid var(--line);
+  padding: 0.8rem 0;
+}
+.row button {
+  color: #20332f;
+  text-align: left;
+  font-weight: 550;
+  min-width: 0;
+}
+.row small {
+  font-weight: 400;
+}
+.badge {
+  white-space: nowrap;
+  font-size: 0.78rem;
+  border-radius: 20px;
+  padding: 0.2rem 0.65rem;
+  background: #edf4ed;
+  color: var(--green);
+}
+#notice:empty {
+  display: none;
+}
+#notice {
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  border: 1px solid #b6d2bf;
+  background: #edf6ee;
+  border-radius: 8px;
+  white-space: pre-line;
+}
+#notice[data-error="true"] {
+  color: #843d29;
+  background: #fff1e9;
+  border-color: #e5b9a4;
+}
+.progress-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+.progress-grid section {
+  padding: 0.7rem;
+  border-radius: 8px;
+  background: #f6f8f3;
+  overflow-wrap: anywhere;
+}
+.progress-grid h3 {
+  margin: 0;
+}
+.progress-grid ul {
+  padding-left: 1.1rem;
+  font-size: 0.85rem;
+}
+.timeline {
+  padding-left: 1.2rem;
+  max-height: 430px;
+  overflow: auto;
+}
+.timeline li {
+  padding: 0.45rem 0.3rem 0.65rem;
+  font-size: 0.87rem;
+}
+.timeline p {
+  margin: 0.25rem 0;
+  white-space: pre-line;
+}
+.news-item {
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+  margin-top: 1rem;
+}
+.news-item h3 {
+  font-size: 1.1rem;
+  margin: 0.2rem 0;
+}
+.news-item p {
+  white-space: pre-line;
+}
+.news-item blockquote {
+  margin: 0.65rem 0;
+  padding: 0.4rem 0.8rem;
+  border-left: 3px solid #b8cfc0;
+  color: #52635b;
+  white-space: pre-wrap;
+  font-size: 0.85rem;
+}
+.empty {
+  color: var(--muted);
+  padding: 0.8rem 0;
+}
+#mail-panel {
+  border-top: 1px solid var(--line);
+  margin-top: 1.3rem;
+  padding-top: 1rem;
+}
+footer {
+  text-align: center;
+  padding: 1rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+@media (max-width: 850px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+  aside {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    align-items: start;
+  }
+  .topbar {
+    padding: 1rem;
+  }
+  .page-heading {
+    align-items: start;
+  }
+  main {
+    padding: 1rem;
+  }
+  .welcome {
+    margin: 1rem auto;
+  }
+}
+@media (max-width: 570px) {
+  aside {
+    display: block;
+  }
+  .page-heading {
+    display: block;
+  }
+  .page-heading > button {
+    width: 100%;
+  }
+  .progress-grid {
+    grid-template-columns: 1fr;
+  }
+  .card {
+    padding: 1rem;
+  }
+  .topbar {
+    gap: 0.5rem;
+  }
+  .brand {
+    font-size: 0.88rem;
+  }
+  #greeting {
+    max-width: 110px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .welcome h1 {
+    font-size: 1.8rem;
+  }
+  .row {
+    align-items: start;
+  }
+  .badge {
+    white-space: normal;
+  }
+}

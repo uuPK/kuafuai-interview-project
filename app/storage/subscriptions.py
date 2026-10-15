@@ -8,6 +8,7 @@ from app.harness.redaction import Redactor
 from app.product.models import ProductError, ProfileInput, SubscriptionInput
 from app.storage.auth import user
 from app.storage.models import RunRequest, SubscriptionSnapshot, timestamp
+from app.storage.schedules import ScheduleStore
 from app.tools.models import ToolFailure
 
 
@@ -47,7 +48,10 @@ class SubscriptionStore:
             row = connection.execute(
                 "SELECT * FROM subscriptions WHERE user_id=?", (owner,)
             ).fetchone()
-        return self._record(row) if row else None
+            result = self._record(row) if row else None
+            if result:
+                result["schedule"] = ScheduleStore.summary(connection, result["id"])
+            return result
 
     def save(self, owner, form):
         form = SubscriptionInput.model_validate(form)
@@ -55,16 +59,26 @@ class SubscriptionStore:
         at = timestamp(self.runs.now())
         with self.database.transaction() as connection:
             self._account(connection, owner)
+            previous = connection.execute(
+                "SELECT * FROM subscriptions WHERE user_id=?", (owner,)
+            ).fetchone()
             connection.execute(
                 "INSERT INTO subscriptions VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET "
                 "preferences_json=excluded.preferences_json,updated_at=excluded.updated_at",
                 (str(uuid4()), owner, form.model_dump_json(), at, at),
             )
-            return self._record(
+            result = self._record(
                 connection.execute(
                     "SELECT * FROM subscriptions WHERE user_id=?", (owner,)
                 ).fetchone()
             )
+            try:
+                before = self._record(previous) if previous else None
+            except ToolFailure:
+                before = None
+            ScheduleStore(self.runs, self).changed(connection, before, result, self.runs.now())
+            result["schedule"] = ScheduleStore.summary(connection, result["id"])
+            return result
 
     def profile(self, owner, form):
         form = ProfileInput.model_validate(form)

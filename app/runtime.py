@@ -22,6 +22,7 @@ from app.storage.materials import MaterialStore
 from app.storage.outbox import OutboxStore
 from app.storage.research import ResearchStore
 from app.storage.runs import RunStore
+from app.storage.schedules import ScheduleStore
 from app.storage.sources import SourceStore
 from app.storage.subscriptions import SubscriptionStore
 from app.storage.timeline import TimelineStore
@@ -47,6 +48,7 @@ async def open_runtime(configured, *, database=None):
     application.state.run_store = RunStore(database, configured)
     subscriptions = SubscriptionStore(application.state.run_store, configured)
     application.state.subscription_store = subscriptions
+    application.state.schedule_store = ScheduleStore(application.state.run_store, subscriptions)
     application.state.call_store = CallStore(application.state.run_store)
     application.state.conversation_store = ConversationStore(application.state.call_store)
     async with AsyncExitStack() as stack:

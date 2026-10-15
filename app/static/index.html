@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>每日 AI 新闻助手</title>
+    <link rel="stylesheet" href="/assets/app.css" />
+    <script src="/assets/app.js" type="module"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">每日 <strong>AI</strong> 新闻助手</a>
+      <div id="account-bar" hidden>
+        <span id="greeting"></span
+        ><button id="logout" class="quiet" type="button">退出</button>
+      </div>
+    </header>
+    <main>
+      <div id="notice" role="status" aria-live="polite"></div>
+      <section id="auth-panel" class="welcome card">
+        <p class="eyebrow">让资讯围绕你的关注展开</p>
+        <h1>每天一份，有依据的 AI 简报。</h1>
+        <p class="muted">
+          设置话题与关键词，查看研究进度、来源引用和历史简报。
+        </p>
+        <div class="tabs">
+          <button id="login-tab" type="button" aria-pressed="true">登录</button
+          ><button
+            id="register-tab"
+            class="quiet"
+            type="button"
+            aria-pressed="false"
+          >
+            注册
+          </button>
+        </div>
+        <form id="auth-form" method="post" action="/auth/login">
+          <label id="nickname-field" hidden
+            >昵称<input name="nickname" maxlength="100" autocomplete="nickname"
+          /></label>
+          <label
+            >邮箱<input
+              name="email"
+              type="email"
+              maxlength="254"
+              autocomplete="username"
+              required
+          /></label>
+          <label
+            >密码<input
+              name="password"
+              type="password"
+              minlength="12"
+              maxlength="128"
+              autocomplete="current-password"
+              required
+            /><small>12～128 个字符</small></label
+          >
+          <button id="auth-submit" type="submit">登录</button>
+        </form>
+      </section>
+      <div id="dashboard" hidden>
+        <section class="page-heading">
+          <div>
+            <p class="eyebrow">你的每日研究台</p>
+            <h1>关注重要进展，保留原文依据。</h1>
+            <p class="muted">北京时间推送 · 过去 24 小时 · 每份最多 5 条</p>
+          </div>
+          <button id="preview" type="button">立即生成预览</button>
+        </section>
+        <div class="workspace">
+          <aside>
+            <section class="card">
+              <h2>我的资料</h2>
+              <form id="profile-form" method="post" action="/me">
+                <label
+                  >昵称<input
+                    name="nickname"
+                    maxlength="100"
+                    required
+                    autocomplete="nickname" /></label
+                ><label
+                  >登录与收件邮箱<input
+                    name="email"
+                    type="email"
+                    maxlength="254"
+                    required
+                    autocomplete="email" /></label
+                ><button class="secondary" type="submit">保存资料</button>
+              </form>
+              <small>邮箱修改后使用新邮箱登录，已有任务保留原资料。</small>
+            </section>
+            <section class="card">
+              <h2>订阅偏好</h2>
+              <form id="subscription-form" method="post" action="/subscription">
+                <label
+                  >关注话题<textarea
+                    name="topics"
+                    rows="3"
+                    maxlength="3000"
+                    placeholder="开源模型&#10;AI 芯片"
+                    required
+                  ></textarea
+                  ><small>每行一项，也可用逗号分隔；最多 20 项。</small></label
+                >
+                <label
+                  >关注关键词<textarea
+                    name="keywords"
+                    rows="2"
+                    maxlength="15000"
+                    placeholder="可选，每行一项"
+                  ></textarea>
+                </label>
+                <label
+                  >排除关键词<textarea
+                    name="exclude_keywords"
+                    rows="2"
+                    maxlength="15000"
+                    placeholder="可选，每行一项"
+                  ></textarea>
+                </label>
+                <div class="form-row">
+                  <label
+                    >新闻条数<select name="max_items">
+                      <option>1</option>
+                      <option>2</option>
+                      <option>3</option>
+                      <option>4</option>
+                      <option selected>5</option>
+                    </select></label
+                  ><label
+                    >北京时间<input
+                      name="push_time"
+                      type="time"
+                      value="09:00"
+                      required
+                  /></label>
+                </div>
+                <label class="check"
+                  ><input
+                    name="enabled"
+                    type="checkbox"
+                    checked
+                  />启用每日订阅</label
+                >
+                <button type="submit">保存订阅</button>
+              </form>
+              <p id="schedule" class="muted"></p>
+            </section>
+          </aside>
+          <div class="content">
+            <section class="card">
+              <div class="section-title">
+                <h2>研究任务</h2>
+                <button id="refresh-runs" class="quiet" type="button">
+                  刷新
+                </button>
+              </div>
+              <p class="muted">
+                预览只生成内容；定时任务在简报通过检查后进入邮件队列。
+              </p>
+              <div id="runs" class="rows"></div>
+              <button id="more-runs" type="button" class="quiet" hidden>
+                加载更多任务
+              </button>
+            </section>
+            <section id="run-panel" class="card" hidden>
+              <div class="section-title">
+                <h2>任务详情</h2>
+                <span id="run-state" class="badge"></span>
+              </div>
+              <p id="run-window" class="muted"></p>
+              <p id="run-reason"></p>
+              <div id="progress" class="progress-grid"></div>
+              <h3>行动与反馈</h3>
+              <ol id="events" class="timeline"></ol>
+              <button id="more-events" class="quiet" type="button" hidden>
+                加载更多事件
+              </button>
+            </section>
+            <section class="card">
+              <div class="section-title">
+                <h2>历史简报</h2>
+                <button id="refresh-briefs" class="quiet" type="button">
+                  刷新
+                </button>
+              </div>
+              <div id="briefs" class="rows"></div>
+              <button id="more-briefs" type="button" class="quiet" hidden>
+                加载更多简报
+              </button>
+            </section>
+            <article id="brief-panel" class="card" hidden>
+              <p id="brief-meta" class="eyebrow"></p>
+              <h2 id="brief-title"></h2>
+              <div id="brief-content"></div>
+              <div id="mail-panel"></div>
+            </article>
+          </div>
+        </div>
+      </div>
+    </main>
+    <footer>每条摘要保留来源与引用；新闻不足时会说明原因。</footer>
+  </body>
+</html>

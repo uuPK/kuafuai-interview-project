@@ -471,6 +471,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "trafilatura" },
+    { name = "tzdata" },
     { name = "uvicorn" },
 ]
 
@@ -497,6 +498,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6,<8" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9,<1" },
     { name = "trafilatura", specifier = ">=2.3,<3" },
+    { name = "tzdata", specifier = ">=2025.2,<2027" },
     { name = "uvicorn", specifier = ">=0.34,<1" },
 ]
 provides-extras = ["dev"]

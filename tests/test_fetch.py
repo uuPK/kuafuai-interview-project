@@ -488,6 +488,7 @@ def test_v6_migration_preserves_candidates_and_rolls_back(tool_env, tmp_path, mo
     monkeypatch.setattr(database_module, "SCHEMA_V12", ())
     monkeypatch.setattr(database_module, "SCHEMA_V13", ())
     monkeypatch.setattr(database_module, "SCHEMA_V14", ())
+    monkeypatch.setattr(database_module, "SCHEMA_V15", ())
     monkeypatch.setattr(database_module, "SCHEMA_V10", ())
     monkeypatch.setattr(database_module, "SCHEMA_V9", ())
     monkeypatch.setattr(database_module, "SCHEMA_VERSION", 5)

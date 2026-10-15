@@ -412,6 +412,7 @@ def test_v8_migration_preserves_materials_and_rolls_back(tool_env, monkeypatch):
     delivery_schema = database_module.SCHEMA_V12
     auth_schema = database_module.SCHEMA_V13
     product_schema = database_module.SCHEMA_V14
+    schedule_schema = database_module.SCHEMA_V15
     review_schema = database_module.SCHEMA_V10
     submission_schema = database_module.SCHEMA_V9
     monkeypatch.setattr(database_module, "SCHEMA_V8", ())
@@ -419,6 +420,7 @@ def test_v8_migration_preserves_materials_and_rolls_back(tool_env, monkeypatch):
     monkeypatch.setattr(database_module, "SCHEMA_V12", ())
     monkeypatch.setattr(database_module, "SCHEMA_V13", ())
     monkeypatch.setattr(database_module, "SCHEMA_V14", ())
+    monkeypatch.setattr(database_module, "SCHEMA_V15", ())
     monkeypatch.setattr(database_module, "SCHEMA_V10", ())
     monkeypatch.setattr(database_module, "SCHEMA_V9", ())
     old.initialize()
@@ -443,6 +445,7 @@ def test_v8_migration_preserves_materials_and_rolls_back(tool_env, monkeypatch):
     monkeypatch.setattr(database_module, "SCHEMA_V12", delivery_schema)
     monkeypatch.setattr(database_module, "SCHEMA_V13", auth_schema)
     monkeypatch.setattr(database_module, "SCHEMA_V14", product_schema)
+    monkeypatch.setattr(database_module, "SCHEMA_V15", schedule_schema)
     old.initialize()
     old.initialize()
     assert runs.get_run(previous.id, "user-1") == previous

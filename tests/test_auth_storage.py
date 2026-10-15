@@ -129,7 +129,15 @@ def test_v13_migration_rolls_back_preserving_old_run(tool_env, monkeypatch):
     env = tool_env
     before = env.runs.get_run(env.run.id, "user-1")
     with env.database.connection() as connection:
-        for table in ("subscriptions", "auth_sessions", "auth_users", "auth_attempts"):
+        for table in (
+            "schedule_notices",
+            "subscription_schedules",
+            "scheduled_runs",
+            "subscriptions",
+            "auth_sessions",
+            "auth_users",
+            "auth_attempts",
+        ):
             connection.execute(f"DROP TABLE {table}")
         connection.execute("PRAGMA user_version=12")
     schema = database_module.SCHEMA_V13

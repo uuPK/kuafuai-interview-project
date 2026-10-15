@@ -21,6 +21,7 @@ from app.storage.schema import (
     SCHEMA_V12,
     SCHEMA_V13,
     SCHEMA_V14,
+    SCHEMA_V15,
     SCHEMA_VERSION,
 )
 
@@ -157,5 +158,9 @@ class Database:
                     version = 13
                 if version == 13:
                     for statement in SCHEMA_V14:
+                        connection.execute(statement)
+                    version = 14
+                if version == 14:
+                    for statement in SCHEMA_V15:
                         connection.execute(statement)
                 connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

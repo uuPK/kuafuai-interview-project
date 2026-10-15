@@ -1,6 +1,6 @@
 # 开发与配置
 
-当前推进到步骤 4.2 订阅与预览接口：登录身份已接入资料、订阅、预览任务、历史简报和安全时间线，预览只保存排队任务并交给 Worker。2026-10-15 用户重启 Docker 后，六项真实容器测试已补验通过；当前模型联通复验超时的记录保持追踪。阶段结果与宿主 IPC 启动故障定位见 acceptance.md。页面、调度和 SMTP 按 4.3～4.5 推进。
+当前推进阶段 4 的连续交付：4.3 原生页面与 4.4 北京时间调度已接入，下一批接入 4.5 SMTP 与阶段验收。登录身份关联资料、订阅、预览、历史和时间线；预览只保存排队任务并交给 Worker。真实服务复验记录见 acceptance.md，本地替身链路与实际新闻质量分开验收。
 
 ## 本地环境
 
@@ -348,3 +348,21 @@ SQLite v14 增加 subscriptions，user_id 唯一且关联 auth_users。预览在
 `app/storage/catalog.py` 只投影产品所需字段，任务和历史均按用户查询；时间线复用白名单投影，完整模型响应、reasoning_content、工具参数/结果原文、正文目录及执行令牌均不公开。简报列表只返回摘要，详情才返回完整已接受文档；外部标题仍是 JSON 文本，4.3 页面负责转义和安全链接渲染。配置凭据继续在输出前脱敏。
 
 API 与独立 Worker 使用同一 DATA_DIR。运行 `python -m app.worker` 持续领取排队任务，或 `python -m app.worker --once` 最多处理一个任务；API 本身不启动研究执行器。无 Worker 时任务保持 queued，缺失模型配置时 Worker 明确保存依赖失败。离线测试通过实际 API、重新装配的 Worker、生产搜索/提交存储与显式模型/搜索/核对替身走通 no_news 简报并从历史读回；它不代表真实模型新闻质量验收。测试入口为 `tests/test_product_api.py` 和 `tests/test_subscriptions.py`，实际服务未完成项见 acceptance.md。
+
+## 原生页面与北京时间调度
+
+2026-10-15 用户授权连续两批完成阶段 4，第一批包含 4.3/4.4；批次之间继续实施，保留每批测试和 Git 同步。本轮计划与细节更新见实施计划第 8.1 节，README 保持不变。
+
+启动 API 后访问 `/`，原生 HTML/CSS/模块 JavaScript 由 `app/api/pages.py` 以固定路由提供，只开放首页及两个资源文件。页面包含注册/登录、资料、订阅、立即预览、任务列表/进度/时间线、历史与引用详情。页面与资源设置 no-store、nosniff、DENY、no-referrer 及仅本站脚本/样式/连接的 CSP；静态资源作为包数据纳入发行包，不映射运行数据目录。
+
+`app/static/app.js` 通过 Cookie 与内存中的 CSRF 调用现有 API，不持久化认证资料。会话变化时取消旧请求并清空私有视图，列表/任务/简报选择以版本号拒绝迟到响应；退出后清空输入和私有内容。任务非终态时轮询，隐藏页面降低频率，失败显示可重试反馈；时间统一转换为北京时间。外部标题、摘要、理由与摘录通过 textContent 构建；来源只允许无凭据的绝对 HTTP(S) 链接，并设置 noopener/noreferrer。脚本标签等输入作为文字展示，未覆盖话题与条数说明保留。窄屏采用单列布局。
+
+`app/storage/schedules.py` 使用 ZoneInfo(Asia/Shanghai)；显式依赖 tzdata，确保 Windows/Linux 都有时区数据。SQLite v15 增加 subscription_schedules、scheduled_runs 与 schedule_notices，分别保存下次 UTC 触发时刻、用户/订阅/北京时间业务日期唯一任务，以及错过区间。升级时把已有定时任务登记为已创建日，不重复补建。时区数据来源参考 [Python zoneinfo](https://docs.python.org/3/library/zoneinfo.html)。
+
+新建、改时间或重新启用订阅时计算不早于保存时刻的下一个时刻；保存晚于当天推送时间时从明天开始，等于该时刻可当天触发。仅改话题、关键词等保留当前计划，暂停使下次触发为空。已创建当日任务后，即使改到稍后时间也不会再次创建；任务使用创建时的资料/偏好快照与计划时刻之前固定 24 小时窗口。
+
+每次调度最多选择 100 个到期或待初始化订阅，逐订阅使用短事务同时读取当前开关/资料、登记任务/事件/日唯一键并推进下次时间。多实例同时轮询仍只创建一次；任一保存失败整体回滚。进程重启保留原计划，迟到最多两小时可补跑，边界恰好两小时允许；超过则记录错过并安排下次。多天停机将连续旧日期压缩为 first_at/last_at/missed_count 的区间，不为旧日期批量生成新闻。坏订阅停止该订阅调度并保存受控错误，重新保存有效偏好可修复。
+
+Worker 命令在每轮领取前运行维护回调，调度按持久时间判断，不依赖内存计时器；研究执行期间下一轮调度可能延后，窗口仍使用计划时刻。`GET/PUT /subscription` 的 schedule 字段展示 timezone、next_at、error_code 和 last_notice；这些是只读运行信息，不能作为订阅输入提交。调度测试入口为 tests/test_schedules.py，页面路由安全为 tests/test_pages.py；`node --test tests/test_frontend.mjs` 检查链接、文本、时区和错误映射。
+
+本地浏览器替身入口为 `python -m tests.ui_fixture --data-dir data/acceptance/browser-stage-4 --port 8765`，只监听回环地址且不读取真实 .env。它装配生产 API/Worker/规则和固定零结果模型/搜索/核对，明确标记 fixture，供页面验证；该入口不属于生产应用或 Worker 配置。真实新闻与邮件验收范围另见 acceptance.md。

@@ -1,6 +1,6 @@
 """Versioned SQLite schema, introduced incrementally with implementation steps."""
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 SCHEMA_V1 = (
     """
@@ -351,5 +351,28 @@ SCHEMA_V14 = (
     """CREATE TABLE subscriptions (
         id TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE REFERENCES auth_users(id),
         preferences_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )""",
+)
+
+SCHEMA_V15 = (
+    """CREATE TABLE subscription_schedules (
+        subscription_id TEXT PRIMARY KEY REFERENCES subscriptions(id) ON DELETE CASCADE,
+        next_at TEXT, error_code TEXT
+    )""",
+    """CREATE TABLE scheduled_runs (
+        user_id TEXT NOT NULL, subscription_id TEXT NOT NULL, business_date TEXT NOT NULL,
+        run_id TEXT NOT NULL UNIQUE REFERENCES runs(id),
+        PRIMARY KEY(user_id,subscription_id,business_date)
+    )""",
+    """INSERT OR IGNORE INTO scheduled_runs
+        SELECT user_id,subscription_id,date(scheduled_for,'+8 hours'),id FROM runs
+        WHERE mode='scheduled' ORDER BY created_at,id""",
+    """CREATE TABLE schedule_notices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        subscription_id TEXT NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+        first_at TEXT NOT NULL, last_at TEXT NOT NULL,
+        missed_count INTEGER NOT NULL CHECK(missed_count>0),
+        reason TEXT NOT NULL, created_at TEXT NOT NULL,
+        UNIQUE(subscription_id,first_at,last_at,reason)
     )""",
 )
