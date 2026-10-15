@@ -130,6 +130,8 @@ def test_v13_migration_rolls_back_preserving_old_run(tool_env, monkeypatch):
     before = env.runs.get_run(env.run.id, "user-1")
     with env.database.connection() as connection:
         for table in (
+            "mail_attempts",
+            "mail_dispatch",
             "schedule_notices",
             "subscription_schedules",
             "scheduled_runs",

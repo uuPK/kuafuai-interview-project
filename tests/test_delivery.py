@@ -250,7 +250,13 @@ def test_v12_migration_is_atomic_and_preserves_existing_brief(brief_env, monkeyp
     before = ready.store.get(result.data["brief_id"], "user-1")
     with env.database.connection() as connection:
         connection.execute("DROP TABLE mail_outbox")
-        for table in ("schedule_notices", "subscription_schedules", "scheduled_runs"):
+        for table in (
+            "mail_attempts",
+            "mail_dispatch",
+            "schedule_notices",
+            "subscription_schedules",
+            "scheduled_runs",
+        ):
             connection.execute(f"DROP TABLE {table}")
         connection.execute("DROP TABLE subscriptions")
         connection.execute("DROP TABLE auth_sessions")

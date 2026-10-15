@@ -27,6 +27,7 @@ async def run(once=False, settings=None):
 
         async def maintenance():
             await asyncio.to_thread(runtime.schedule_store.tick)
+            await runtime.mailer.run_once()
 
         worker = Worker(
             runner,

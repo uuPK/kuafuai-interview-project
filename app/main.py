@@ -68,6 +68,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 "cursor",
                                 "limit",
                                 "after_id",
+                                "confirm_duplicate",
                             }
                             else "[unknown]",
                             "code": item["type"],

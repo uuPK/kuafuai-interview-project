@@ -366,3 +366,24 @@ API 与独立 Worker 使用同一 DATA_DIR。运行 `python -m app.worker` 持�
 Worker 命令在每轮领取前运行维护回调，调度按持久时间判断，不依赖内存计时器；研究执行期间下一轮调度可能延后，窗口仍使用计划时刻。`GET/PUT /subscription` 的 schedule 字段展示 timezone、next_at、error_code 和 last_notice；这些是只读运行信息，不能作为订阅输入提交。调度测试入口为 tests/test_schedules.py，页面路由安全为 tests/test_pages.py；`node --test tests/test_frontend.mjs` 检查链接、文本、时区和错误映射。
 
 本地浏览器替身入口为 `python -m tests.ui_fixture --data-dir data/acceptance/browser-stage-4 --port 8765`，只监听回环地址且不读取真实 .env。它装配生产 API/Worker/规则和固定零结果模型/搜索/核对，明确标记 fixture，供页面验证；该入口不属于生产应用或 Worker 配置。真实新闻与邮件验收范围另见 acceptance.md。
+
+## SMTP 发送与邮件状态
+
+`app/worker/__main__.py` 每轮维护先调度、再由 Mailer 处理最多一封到期邮件，之后领取研究任务。API 与 Worker 共用 DATA_DIR；邮件不通过模型工具或 HTTP 请求直接发送。`--once` 也执行一次维护，新研究完成后生成的邮件在下一轮处理。SMTP 使用 Python 标准库，不增加运行依赖。
+
+配置增加 SMTP_ENABLED（默认 false）、MAIL_MAX_ATTEMPTS（默认 3，范围 1～3）和 MAIL_RETRY_SECONDS（默认 60，范围 1～3600 秒），沿用 SMTP_HOST/PORT/USERNAME/PASSWORD/FROM/TLS_MODE/TEST_RECIPIENT 与 REQUEST_TIMEOUT_SECONDS。配置更改后重启 API 和 Worker；SMTP_HOST/FROM 缺失或认证参数不成对时保留 pending，不领取发送。默认 STARTTLS，ssl 模式使用 SMTP_SSL，两者均使用系统信任链校验证书与主机名；none 只支持无用户名/密码的 localhost 或回环 IP 测试服务。指定 SMTP_TEST_RECIPIENT 时必须与固定收件人一致，不重写收件人；留空表示没有这一额外测试名单限制。
+
+`app/providers/smtp.py` 验证单一 ASCII 邮箱、头字段和 2 MB 编码后邮件上限，构建中文纯文本 MIME；收件人/正文来自已通过提交的固定记录，Date 和 Message-ID 可在重试中保持一致。连接共享耗时预算，每条 SMTP 命令前更新剩余 socket 超时。认证在加密之后执行；在 MAIL 和 DATA 前重新检查当前订阅开关与领取资格。连接与明确 4xx 拒绝有限重试，5xx、地址/配置/权限问题停止；DATA 开始后连接丢失、超时或异常保守标记 unknown。参考 [Python smtplib](https://docs.python.org/3.13/library/smtplib.html) 和 [RFC 5321](https://www.rfc-editor.org/rfc/rfc5321) 的 DATA 接受语义；这是带应用超时的提交客户端。
+
+SQLite v16 新增 mail_dispatch（领取令牌、到期、下次尝试、周期计数与固定 Message-ID）和 mail_attempts（每次开始、结束、结果与受控错误码）。旧 pending 记录首次领取时补建元信息。`app/storage/dispatch.py` 通过短事务领取与保存结果，网络请求在事务外；校验固定内容哈希和实时订阅，竞争领取只成功一次，旧令牌不能提交新周期结果。发送租约取 max(60, 请求超时×3+30) 秒；崩溃后到期的 sending 转 unknown。SMTP 已接受但本地结果提交失败时保留 sending，随后同样转 unknown，自动恢复不重复发送。
+
+| 接口 | 行为 |
+| --- | --- |
+| GET /briefs/{brief_id}/mail | 当前用户邮件状态、尝试次数、下次时间、受控错误和重发资格；预览或未入队返回 mail=null；delivery_available 表示配置开关与必填字段齐备 |
+| POST /briefs/{brief_id}/mail/resend | CSRF 保护，JSON confirm_duplicate 为严格 bool、默认 false；只有 failed/unknown 可重新入队，unknown 必须为 true；SMTP 未启用/配置缺失返回 503 MAIL_UNAVAILABLE |
+
+两接口均校验简报归属，不公开正文、收件人、SMTP 参数或领取令牌。重发前再查实时订阅，保持原收件人、正文、简报及 Message-ID；总尝试次数累加，新周期自动尝试重新从零计算。Message-ID 不是服务器去重承诺。pending/sending/sent 不允许手动重发，重复请求不会重复入队。邮件状态变化与时间线事件同时提交，协议错误原文不进入公开响应。
+
+页面对定时简报查询邮件状态，pending/sending 在服务可用时轮询，切换简报/会话或退出后取消旧轮询，拒绝迟到响应。unknown 的重发先显示页面内风险提示与确认/取消按钮；取消不发请求，确认后才提交 confirm_duplicate=true。sent 展示“已被邮件服务器接受”，附最终送达尚未保证的说明；预览显示不发送。没有 SMTP 配置时说明队列保留，不标记成功。
+
+`tests/smtp_support.py` 是真实回环 TCP SMTP 接收器，可模拟 4xx/5xx、提交前断开及接收后丢失确认。test_smtp.py 覆盖协议/加密/地址/头字段等，test_mail.py 覆盖持久化、并发、失败与恢复，mail_crash.py 使用 os._exit 验证真实进程中断。test_stage_four.py 将 HTTP 注册/订阅、生产调度、研究 Worker、固定搜索/模型/核对、本地 SMTP 和重启读回连起来，明确为 fixture 新闻。浏览器入口也启动本地 SMTP，`--smtp-mode drop_after` 可让首次连接丢失确认；ui_mail_fixture.py 可在服务停止时为已有测试账号生成独立 unknown 样例，只用于隔离测试目录。以上均不读取真实 .env，不接入外部邮箱。

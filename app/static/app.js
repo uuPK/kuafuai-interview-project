@@ -27,6 +27,7 @@ const errors = {
   BODY_TOO_LARGE: "输入内容过长，请缩短后重试。",
   CONFIRM_DUPLICATE_DELIVERY: "重发前需要确认可能重复投递。",
   MAIL_NOT_RETRYABLE: "当前邮件状态不能重发。",
+  MAIL_UNAVAILABLE: "邮件服务尚未启用或配置不完整，请联系维护者。",
 };
 export function splitValues(value) {
   return value
@@ -61,6 +62,26 @@ export function localTime(value) {
 export function messageFor(code) {
   return errors[code] || "操作未完成，请稍后重试。";
 }
+export function mailText(mail) {
+  const reasons = {
+    SMTP_RESULT_UNKNOWN:
+      "邮件服务器可能已经接受，请先核实收件箱；重发可能收到两封。",
+    SMTP_REJECTED: "邮件服务器明确拒绝本次请求。",
+    SMTP_TEMPORARY: "连接暂时失败，尚未开始提交正文。",
+    MAIL_RETRY_EXHAUSTED: "自动尝试次数已用完，可检查配置后手动重发。",
+    SUBSCRIPTION_DISABLED: "订阅已暂停，发送已阻止。",
+    MAIL_TEST_RECIPIENT_MISMATCH: "收件地址与维护者配置的测试地址不一致。",
+    MAIL_STATE_PROBLEM: "固定邮件记录需要维护者检查。",
+  };
+  return (
+    `邮件：${mail.status === "failed" ? "发送失败" : labels[mail.status] || "状态待检查"}；已尝试 ${mail.attempts} 次。` +
+    (mail.retry_at ? `下次尝试：${localTime(mail.retry_at)}。` : "") +
+    (mail.error_code
+      ? reasons[mail.error_code] || "发送配置或连接需要维护者检查。"
+      : "") +
+    (mail.status === "sent" ? "服务器接受不代表最终送达。" : "")
+  );
+}
 function node(tag, text, cls) {
   const n = document.createElement(tag);
   if (text !== undefined) n.textContent = String(text);
@@ -78,6 +99,7 @@ const state = {
   briefView: 0,
   listView: { runs: 0, briefs: 0 },
   timer: null,
+  mailTimer: null,
   after: 0,
   eventsMore: false,
   cursors: { runs: null, briefs: null },
@@ -93,6 +115,7 @@ function cancelPoll() {
 }
 function reset(user = null) {
   cancelPoll();
+  clearTimeout(state.mailTimer);
   state.controller.abort();
   state.controller = new AbortController();
   state.epoch++;
@@ -390,6 +413,7 @@ function citation(c) {
 }
 async function showBrief(id) {
   const view = ++state.briefView;
+  clearTimeout(state.mailTimer);
   const b = await request("/briefs/" + encodeURIComponent(id));
   if (view !== state.briefView) return;
   $("brief-panel").hidden = false;
@@ -419,8 +443,84 @@ async function showBrief(id) {
       node("p", "条数说明：" + b.document.shortfall_reason, "muted"),
     );
   $("mail-panel").replaceChildren();
-  if (typeof window.newsMailStatus === "function")
-    await window.newsMailStatus(id, b.mode, request, node, action, notice);
+  await mailStatus(id, b.mode, view);
+}
+async function mailStatus(id, mode, view) {
+  if (view !== state.briefView || !state.user) return;
+  clearTimeout(state.mailTimer);
+  if (mode === "preview") {
+    $("mail-panel").replaceChildren(
+      node("p", "预览仅保存在页面，不发送邮件。", "muted"),
+    );
+    return;
+  }
+  let active = true;
+  try {
+    const { mail, delivery_available } = await request(
+      `/briefs/${encodeURIComponent(id)}/mail`,
+    );
+    if (view !== state.briefView || !state.user) return;
+    const panel = $("mail-panel");
+    panel.replaceChildren(node("h3", "邮件状态"));
+    if (!mail) {
+      panel.append(node("p", "本次简报未入邮件队列，提交时订阅可能已暂停。"));
+      return;
+    }
+    panel.append(node("p", mailText(mail)));
+    if (!delivery_available)
+      panel.append(
+        node("p", "邮件服务尚未启用或配置不完整；队列已保留。", "muted"),
+      );
+    if (mail.can_resend && delivery_available) {
+      const button = node("button", "重发这封邮件", "quiet");
+      button.type = "button";
+      const resend = async () => {
+        if (view !== state.briefView || !state.user) return;
+        await request(`/briefs/${encodeURIComponent(id)}/mail/resend`, {
+          method: "POST",
+          body: { confirm_duplicate: mail.confirmation_required },
+        });
+        if (view !== state.briefView) return;
+        notice("已请求重发，沿用这份简报的固定收件人与正文。");
+        await mailStatus(id, mode, view);
+      };
+      button.addEventListener("click", () => {
+        if (!mail.confirmation_required) return action(button, resend);
+        button.hidden = true;
+        const confirmation = node("div", undefined, "mail-confirmation");
+        confirmation.setAttribute("role", "group");
+        confirmation.setAttribute("aria-label", "确认重复投递风险");
+        confirmation.append(
+          node(
+            "p",
+            "上次发送结果不确定，邮件服务器可能已经接受。重发可能收到两封，请先核实收件箱。",
+          ),
+        );
+        const confirm = node("button", "确认重发，接受可能重复投递");
+        const cancel = node("button", "取消重发", "quiet");
+        confirm.type = cancel.type = "button";
+        confirm.addEventListener("click", () => action(confirm, resend));
+        cancel.addEventListener("click", () => {
+          confirmation.remove();
+          button.hidden = false;
+          button.focus();
+        });
+        confirmation.append(confirm, cancel);
+        panel.append(confirmation);
+        confirm.focus();
+      });
+      panel.append(button);
+    }
+    active = ["pending", "sending"].includes(mail.status) && delivery_available;
+  } catch (e) {
+    if (e.name === "AbortError" || view !== state.briefView) return;
+    $("mail-panel").replaceChildren(node("p", e.message));
+  }
+  if (active && view === state.briefView && state.user)
+    state.mailTimer = setTimeout(
+      () => mailStatus(id, mode, view),
+      document.hidden ? 15000 : 3000,
+    );
 }
 function authMode(mode) {
   state.mode = mode;

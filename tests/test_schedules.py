@@ -146,7 +146,13 @@ def test_migrated_subscription_bootstrap_and_schema_rollback(client, monkeypatch
     state = clock_at(client, "2026-10-15T00:00:00+00:00")
     subscribe(client)
     with state.database.connection() as connection:
-        for table in ("schedule_notices", "subscription_schedules", "scheduled_runs"):
+        for table in (
+            "mail_attempts",
+            "mail_dispatch",
+            "schedule_notices",
+            "subscription_schedules",
+            "scheduled_runs",
+        ):
             connection.execute(f"DROP TABLE {table}")
         connection.execute("PRAGMA user_version=14")
     schema = database_module.SCHEMA_V15

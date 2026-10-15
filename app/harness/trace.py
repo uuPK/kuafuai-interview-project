@@ -48,6 +48,12 @@ LABELS = {
     "model_request_recovered": "中断模型请求已处理",
     "recovery_failed": "任务恢复失败",
     "bash_recovery_cleaned": "残留工具容器已清理",
+    "mail_sending": "开始发送邮件",
+    "mail_sent": "邮件服务器已接受",
+    "mail_failed": "邮件发送未完成",
+    "mail_unknown": "邮件发送结果不确定",
+    "mail_retry_waiting": "邮件等待有限重试",
+    "mail_resend_requested": "用户请求重新发送",
 }
 
 

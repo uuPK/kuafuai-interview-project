@@ -6,7 +6,13 @@ from fastapi import APIRouter, Depends, Path, Query, Request
 
 from app.api.auth import current_user, require_csrf
 from app.auth.models import User
-from app.product.models import EmptyInput, ProductError, ProfileInput, SubscriptionInput
+from app.product.models import (
+    EmptyInput,
+    ProductError,
+    ProfileInput,
+    ResendInput,
+    SubscriptionInput,
+)
 
 router = APIRouter(dependencies=[Depends(current_user)])
 Identity = Annotated[User, Depends(current_user)]
@@ -96,3 +102,22 @@ def briefs(request: Request, account: Identity, paging: Pagination):
 @router.get("/briefs/{brief_id}", dependencies=READ)
 def brief(brief_id: ResourceID, request: Request, account: Identity):
     return request.app.state.catalog_store.brief(brief_id, account.id)
+
+
+@router.get("/briefs/{brief_id}/mail", dependencies=READ)
+def mail(brief_id: ResourceID, request: Request, account: Identity):
+    return {
+        "mail": request.app.state.dispatch_store.status(brief_id, account.id),
+        "delivery_available": request.app.state.smtp_transport.ready,
+    }
+
+
+@router.post("/briefs/{brief_id}/mail/resend", status_code=202, dependencies=WRITE)
+def resend(brief_id: ResourceID, form: ResendInput, request: Request, account: Identity):
+    if not request.app.state.smtp_transport.ready:
+        raise ProductError("MAIL_UNAVAILABLE", 503)
+    return {
+        "mail": request.app.state.dispatch_store.resend(
+            brief_id, account.id, confirm_duplicate=form.confirm_duplicate
+        )
+    }

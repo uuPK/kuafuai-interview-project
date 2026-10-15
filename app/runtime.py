@@ -11,6 +11,7 @@ from app.providers.bocha import BochaClient
 from app.providers.deepseek import DeepSeekClient
 from app.providers.feeds import FeedCatalog, FeedClient
 from app.providers.public_http import PublicHttpClient
+from app.providers.smtp import SMTPTransport
 from app.storage.auth import AuthStore
 from app.storage.briefs import BriefStore
 from app.storage.calls import CallStore
@@ -18,6 +19,7 @@ from app.storage.candidates import CandidateStore
 from app.storage.catalog import CatalogStore
 from app.storage.conversations import ConversationStore
 from app.storage.database import Database
+from app.storage.dispatch import DispatchStore
 from app.storage.materials import MaterialStore
 from app.storage.outbox import OutboxStore
 from app.storage.research import ResearchStore
@@ -35,6 +37,7 @@ from app.tools.registry import ToolRegistry
 from app.tools.research import register_research
 from app.tools.search import register_search
 from app.tools.submit import register_submission
+from app.worker.mail import Mailer
 
 
 @asynccontextmanager
@@ -94,6 +97,10 @@ async def open_runtime(configured, *, database=None):
         )
         application.state.brief_store = briefs
         application.state.outbox_store = briefs.outbox
+        dispatch = DispatchStore(briefs.outbox, briefs, configured)
+        application.state.dispatch_store = dispatch
+        application.state.smtp_transport = SMTPTransport(configured)
+        application.state.mailer = Mailer(dispatch, application.state.smtp_transport)
         application.state.timeline_store = TimelineStore(application.state.run_store)
         application.state.catalog_store = CatalogStore(research, briefs, configured)
         reviewer = IndependentReviewer(model, research, sources, configured)

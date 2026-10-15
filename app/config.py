@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     smtp_from: str | None = Field(default=None, min_length=1, repr=False, exclude=True)
     smtp_tls_mode: Literal["starttls", "ssl", "none"] = "starttls"
     smtp_test_recipient: str | None = Field(default=None, min_length=1, repr=False, exclude=True)
+    smtp_enabled: bool = False
+    mail_max_attempts: int = Field(default=3, ge=1, le=3)
+    mail_retry_seconds: int = Field(default=60, ge=1, le=3600)
 
     session_secret: SecretStr | None = Field(default=None, repr=False, exclude=True)
     session_cookie_secure: bool = False

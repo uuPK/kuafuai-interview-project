@@ -51,6 +51,10 @@ class EmptyInput(Input):
     pass
 
 
+class ResendInput(Input):
+    confirm_duplicate: bool = False
+
+
 class ProductError(Exception):
     def __init__(self, code, status=409):
         self.code, self.status = code, status

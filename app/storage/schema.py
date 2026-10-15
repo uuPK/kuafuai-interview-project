@@ -1,6 +1,6 @@
 """Versioned SQLite schema, introduced incrementally with implementation steps."""
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 SCHEMA_V1 = (
     """
@@ -374,5 +374,23 @@ SCHEMA_V15 = (
         missed_count INTEGER NOT NULL CHECK(missed_count>0),
         reason TEXT NOT NULL, created_at TEXT NOT NULL,
         UNIQUE(subscription_id,first_at,last_at,reason)
+    )""",
+)
+
+SCHEMA_V16 = (
+    """CREATE TABLE mail_dispatch (
+        brief_id TEXT PRIMARY KEY REFERENCES mail_outbox(brief_id) ON DELETE CASCADE,
+        token TEXT, expires_at TEXT, next_at TEXT, error_code TEXT,
+        cycle_attempts INTEGER NOT NULL DEFAULT 0 CHECK(cycle_attempts>=0),
+        message_id TEXT NOT NULL,
+        CHECK ((token IS NULL)=(expires_at IS NULL))
+    )""",
+    """CREATE TABLE mail_attempts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        brief_id TEXT NOT NULL REFERENCES mail_outbox(brief_id) ON DELETE CASCADE,
+        number INTEGER NOT NULL CHECK(number>0), token TEXT NOT NULL UNIQUE,
+        started_at TEXT NOT NULL, finished_at TEXT,
+        status TEXT NOT NULL CHECK(status IN ('sending','sent','retry','failed','unknown')),
+        error_code TEXT, UNIQUE(brief_id,number)
     )""",
 )

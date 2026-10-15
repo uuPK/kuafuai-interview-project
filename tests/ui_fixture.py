@@ -19,6 +19,7 @@ from app.tools.registry import ToolRegistry
 from app.tools.search import register_search
 from app.tools.submit import register_submission
 from app.worker.service import Worker
+from tests.smtp_support import smtp_server
 
 
 class FixtureModel:
@@ -57,9 +58,17 @@ class FixtureModel:
         )
 
 
-def fixture_app(directory):
+def fixture_app(directory, smtp_port=None):
     config = Settings(
-        _env_file=None, data_dir=directory, session_secret="browser-fixture-secret-" * 3
+        _env_file=None,
+        data_dir=directory,
+        session_secret="browser-fixture-secret-" * 3,
+        smtp_enabled=smtp_port is not None,
+        smtp_host="127.0.0.1" if smtp_port else None,
+        smtp_port=smtp_port or 25,
+        smtp_tls_mode="none",
+        smtp_from="sender@example.com" if smtp_port else None,
+        smtp_test_recipient="browser-stage4@example.com",
     )
     app = create_app(config)
     original = app.router.lifespan_context
@@ -100,6 +109,7 @@ def fixture_app(directory):
 
                 async def maintenance():
                     await asyncio.to_thread(runtime.schedule_store.tick)
+                    await runtime.mailer.run_once()
 
                 worker = Worker(runner, maintenance=maintenance)
                 stop = asyncio.Event()
@@ -118,5 +128,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--smtp-mode", choices=("accept", "drop_after"), default="accept")
     args = parser.parse_args()
-    uvicorn.run(fixture_app(args.data_dir), host="127.0.0.1", port=args.port)
+    with smtp_server(args.smtp_mode) as smtp:
+        uvicorn.run(
+            fixture_app(args.data_dir, smtp.server_address[1]), host="127.0.0.1", port=args.port
+        )

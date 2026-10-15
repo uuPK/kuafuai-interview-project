@@ -444,6 +444,7 @@ def test_v6_migration_preserves_run_and_rolls_back(tmp_path, monkeypatch):
     auth_schema = database_module.SCHEMA_V13
     product_schema = database_module.SCHEMA_V14
     schedule_schema = database_module.SCHEMA_V15
+    mail_schema = database_module.SCHEMA_V16
     review_schema = database_module.SCHEMA_V10
     submission_schema = database_module.SCHEMA_V9
     monkeypatch.setattr(database_module, "SCHEMA_V8", ())
@@ -452,6 +453,7 @@ def test_v6_migration_preserves_run_and_rolls_back(tmp_path, monkeypatch):
     monkeypatch.setattr(database_module, "SCHEMA_V13", ())
     monkeypatch.setattr(database_module, "SCHEMA_V14", ())
     monkeypatch.setattr(database_module, "SCHEMA_V15", ())
+    monkeypatch.setattr(database_module, "SCHEMA_V16", ())
     monkeypatch.setattr(database_module, "SCHEMA_V10", ())
     monkeypatch.setattr(database_module, "SCHEMA_V9", ())
     database.initialize()
@@ -474,6 +476,7 @@ def test_v6_migration_preserves_run_and_rolls_back(tmp_path, monkeypatch):
     monkeypatch.setattr(database_module, "SCHEMA_V13", auth_schema)
     monkeypatch.setattr(database_module, "SCHEMA_V14", product_schema)
     monkeypatch.setattr(database_module, "SCHEMA_V15", schedule_schema)
+    monkeypatch.setattr(database_module, "SCHEMA_V16", mail_schema)
     database.initialize()
     database.initialize()
     with database.connection() as connection:
