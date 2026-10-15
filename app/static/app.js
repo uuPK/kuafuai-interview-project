@@ -18,6 +18,7 @@ const errors = {
   INVALID_INPUT: "请检查输入格式、长度和重复项。",
   JSON_REQUIRED: "请求格式有误，请刷新页面后重试。",
   AUTH_UNAVAILABLE: "登录服务尚未配置，请联系维护者。",
+  AUTH_REQUIRED: "登录已过期，请重新登录。",
   SUBSCRIPTION_REQUIRED: "请先保存订阅偏好。",
   SUBSCRIPTION_DISABLED: "订阅已暂停，请启用并保存后再生成。",
   CSRF_REJECTED: "会话凭据已更新，请重试。",
@@ -102,6 +103,9 @@ const state = {
   mailTimer: null,
   after: 0,
   eventsMore: false,
+  eventPage: null,
+  eventIDs: new Set(),
+  pollingView: null,
   cursors: { runs: null, briefs: null },
   ids: { runs: new Set(), briefs: new Set() },
 };
@@ -124,6 +128,9 @@ function reset(user = null) {
   state.user = user;
   state.run = null;
   state.after = 0;
+  state.eventPage = null;
+  state.eventIDs.clear();
+  state.pollingView = null;
   state.ids = { runs: new Set(), briefs: new Set() };
   state.cursors = { runs: null, briefs: null };
   for (const id of [
@@ -181,6 +188,8 @@ async function request(path, { method = "GET", body } = {}) {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
   } catch (e) {
+    if (epoch !== state.epoch)
+      throw new DOMException("stale session", "AbortError");
     if (e.name === "AbortError") throw e;
     throw new Error("连接暂时失败，请稍后重试。");
   }
@@ -190,6 +199,8 @@ async function request(path, { method = "GET", body } = {}) {
   try {
     data = await response.json();
   } catch {
+    if (epoch !== state.epoch)
+      throw new DOMException("stale session", "AbortError");
     throw new Error("服务响应异常，请稍后重试。");
   }
   if (epoch !== state.epoch)
@@ -323,46 +334,67 @@ async function selectRun(id) {
   state.run = id;
   state.view++;
   state.after = 0;
+  state.eventIDs.clear();
+  $("more-events").hidden = true;
   $("events").replaceChildren();
   $("run-panel").hidden = false;
-  await poll(state.view);
-  $("run-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  const view = state.view;
+  await poll(view);
+  if (view === state.view && state.user)
+    $("run-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 async function events(view) {
-  const page = await request(
-    `/runs/${encodeURIComponent(state.run)}/events?after_id=${state.after}&limit=50`,
-  );
-  if (view !== state.view) return;
-  for (const event of page.events) {
-    const li = node("li");
-    li.append(
-      node("strong", event.summary),
-      node("small", localTime(event.occurred_at)),
+  if (view !== state.view || state.eventPage?.view === view) return;
+  const pageRequest = { view };
+  state.eventPage = pageRequest;
+  try {
+    const page = await request(
+      `/runs/${encodeURIComponent(state.run)}/events?after_id=${state.after}&limit=50`,
     );
-    const d = event.data;
-    const parts = [];
-    if (d.name) parts.push(`工具：${d.name}`);
-    if (d.parameters?.query) parts.push(`查询：${d.parameters.query}`);
-    if (d.reason) parts.push(`原因：${d.reason}`);
-    if (d.error_code) parts.push(`反馈：${d.error_code}`);
-    if (d.issues)
-      for (const issue of d.issues)
-        parts.push(
-          typeof issue === "string" ? issue : issue.issue || "检查反馈",
-        );
-    if (d.items)
-      for (const item of d.items)
-        if (item.selection_reason)
-          parts.push(`入选理由：${item.selection_reason}`);
-    if (parts.length) li.append(node("p", parts.join("\n")));
-    $("events").append(li);
+    if (view !== state.view) return;
+    for (const event of page.events) {
+      if (state.eventIDs.has(event.id)) continue;
+      state.eventIDs.add(event.id);
+      const li = node("li");
+      li.append(
+        node("strong", event.summary),
+        node("small", localTime(event.occurred_at)),
+      );
+      const d = event.data;
+      const parts = [];
+      if (d.name) parts.push(`工具：${d.name}`);
+      if (d.parameters?.query) parts.push(`查询：${d.parameters.query}`);
+      if (d.reason) parts.push(`原因：${d.reason}`);
+      if (d.error_code) parts.push(`反馈：${d.error_code}`);
+      if (d.issues)
+        for (const issue of d.issues)
+          parts.push(
+            typeof issue === "string" ? issue : issue.issue || "检查反馈",
+          );
+      if (d.items)
+        for (const item of d.items)
+          if (item.selection_reason)
+            parts.push(`入选理由：${item.selection_reason}`);
+      if (parts.length) li.append(node("p", parts.join("\n")));
+      $("events").append(li);
+    }
+    state.after = page.next_after_id;
+    state.eventsMore = page.has_more;
+    $("more-events").hidden = !page.has_more;
+  } finally {
+    if (state.eventPage === pageRequest) state.eventPage = null;
   }
-  state.after = page.next_after_id;
-  state.eventsMore = page.has_more;
-  $("more-events").hidden = !page.has_more;
 }
 async function poll(view) {
-  if (view !== state.view || !state.run || !state.user) return;
+  if (
+    view !== state.view ||
+    !state.run ||
+    !state.user ||
+    state.pollingView === view
+  )
+    return;
+  state.pollingView = view;
+  const briefView = state.briefView;
   let active = true;
   try {
     await session(false);
@@ -385,15 +417,21 @@ async function poll(view) {
       progressBlock("当前问题", run.progress.issues),
     );
     await events(view);
+    if (view !== state.view || !state.user) return;
     active = ["queued", "running", "waiting_retry"].includes(run.status);
     if (!active) {
       await loadList("runs", true);
+      if (view !== state.view || !state.user) return;
       await loadList("briefs", true);
-      if (run.brief_id) await showBrief(run.brief_id);
+      if (view !== state.view || !state.user) return;
+      if (run.brief_id && briefView === state.briefView)
+        await showBrief(run.brief_id);
     }
   } catch (e) {
-    if (e.name === "AbortError") return;
+    if (e.name === "AbortError" || view !== state.view) return;
     notice(e.message, true);
+  } finally {
+    if (state.pollingView === view) state.pollingView = null;
   }
   if (active && view === state.view && state.user)
     state.timer = setTimeout(() => poll(view), document.hidden ? 15000 : 2500);
@@ -499,7 +537,16 @@ async function mailStatus(id, mode, view) {
         const confirm = node("button", "确认重发，接受可能重复投递");
         const cancel = node("button", "取消重发", "quiet");
         confirm.type = cancel.type = "button";
-        confirm.addEventListener("click", () => action(confirm, resend));
+        confirm.addEventListener("click", () =>
+          action(confirm, async () => {
+            cancel.disabled = true;
+            try {
+              await resend();
+            } finally {
+              cancel.disabled = false;
+            }
+          }),
+        );
         cancel.addEventListener("click", () => {
           confirmation.remove();
           button.hidden = false;

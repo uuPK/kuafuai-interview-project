@@ -4,6 +4,7 @@
   background: #f4f6f2;
   font-synthesis: none;
   line-height: 1.65;
+  overflow-wrap: anywhere;
   --green: #186653;
   --line: #dce4dc;
   --muted: #62736c;

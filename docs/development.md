@@ -387,3 +387,11 @@ SQLite v16 新增 mail_dispatch（领取令牌、到期、下次尝试、周期�
 页面对定时简报查询邮件状态，pending/sending 在服务可用时轮询，切换简报/会话或退出后取消旧轮询，拒绝迟到响应。unknown 的重发先显示页面内风险提示与确认/取消按钮；取消不发请求，确认后才提交 confirm_duplicate=true。sent 展示“已被邮件服务器接受”，附最终送达尚未保证的说明；预览显示不发送。没有 SMTP 配置时说明队列保留，不标记成功。
 
 `tests/smtp_support.py` 是真实回环 TCP SMTP 接收器，可模拟 4xx/5xx、提交前断开及接收后丢失确认。test_smtp.py 覆盖协议/加密/地址/头字段等，test_mail.py 覆盖持久化、并发、失败与恢复，mail_crash.py 使用 os._exit 验证真实进程中断。test_stage_four.py 将 HTTP 注册/订阅、生产调度、研究 Worker、固定搜索/模型/核对、本地 SMTP 和重启读回连起来，明确为 fixture 新闻。浏览器入口也启动本地 SMTP，`--smtp-mode drop_after` 可让首次连接丢失确认；ui_mail_fixture.py 可在服务停止时为已有测试账号生成独立 unknown 样例，只用于隔离测试目录。以上均不读取真实 .env，不接入外部邮箱。
+
+## 网站异步状态回归
+
+任务轮询按当前任务选择版本串行执行，事件分页同一时刻只保留一个请求，并按事件 ID 去重。每个 await 之后核对当前选择，旧任务终态不能打开已经切走的简报；用户手动选过历史后，后台完成不抢回详情。切换会话时取消请求并重置事件/轮询状态，迟到的网络或 JSON 错误同样丢弃。401 保留明确的重新登录提示；邮件确认提交期间同时禁用确认与取消，避免把已经提交的请求表现为可取消。长连续文本继承 overflow-wrap:anywhere，覆盖列表按钮、标题与引用。
+
+运行 `node --test tests/test_frontend.mjs tests/test_frontend_state.mjs`，共 15 项；后者的 10 项用可控异步响应验证选择、轮询、错误、会话和重发边界。frontend_support.mjs 只提供内存 DOM、计时器和 fetch 替身，不启动浏览器、不增加前端运行依赖，也不向生产模块暴露测试接口。真实浏览器另验证表单、分页、引用、邮件与响应式布局。
+
+`tests/ui_audit_fixture.py <隔离测试目录>` 为已注册的 browser-stage4@example.com 测试账号增加 12 份明确标注 fixture 的历史文档，包含连续英文、HTML 字样、引用和 58 条事件。应在测试服务停止时准备数据，再启动 tests.ui_fixture；目录不得指向真实用户数据。文档直接用于展示验收，不经过新闻研究和引用质量验收。邮件 unknown 样例仍由 ui_mail_fixture.py 通过实际回环 SMTP 丢失确认生成。
