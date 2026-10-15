@@ -1,6 +1,6 @@
 # 开发与配置
 
-当前完成步骤 3.4：定时简报的待发送邮件与简报/历史/工具反馈原子保存，新增按用户查询的安全时间线和提交后 JSON 日志。原有模型研究、核对修订和 Worker 恢复继续沿用；3.3 的真实 Docker 残留清理待补验。登录、订阅接口、页面、调度和 SMTP 按阶段 4 推进。
+当前推进到步骤 3.5 的阶段验收：已串联核对反馈、重读/修订、保存响应后冷启动，以及邮件事务提交后的进程退出恢复。阶段 3 实现和离线验收结果见 acceptance.md，真实 Docker 残留清理仍待补验。登录、订阅接口、页面、调度和 SMTP 按阶段 4 推进。
 
 ## 本地环境
 
@@ -265,3 +265,21 @@ SQLite v12 增加 mail_outbox，以 brief_id 为主键、run_id 为唯一键，�
 `app/harness/trace.py` 的 app.events logger 输出一行一个 JSON，包含 event_id/run_id/event/occurred_at/data；API 和 Worker 共用启动设置。数据库事件在业务事务内保存，`Database.transaction` 提交并释放写锁后才输出本事务日志。日志处理器异常不会改变已提交结果；提交后、日志输出前进程退出可能缺少控制台行，SQLite 时间线仍为追溯依据。事件写入过滤配置凭据和认证字段，时间线/日志再次过滤白名单、邮箱、凭据赋值和大小；完整协议继续保存在现有受控表。无需新增配置或依赖。
 
 离线测试入口为 `tests/test_delivery.py`、`tests/test_timeline.py`，覆盖三个事务中断位置、同意图恢复、并发重复入队、跨用户读取、有效空简报、暂停检查接缝、邮箱注入、固定内容损坏、v11→v12 回滚、时间线分页/损坏、协议保留与投影隔离、只输出已提交事件及日志故障。本步没有发送邮件或新增模型/搜索请求；真实 SMTP 联通继续待 4.5。
+
+## 阶段 3 串联验收（3.5）
+
+`tests/test_phase_three.py` 集中运行 10 个离线场景。三个修订场景分别在首稿加入无依据数字、遗漏比较条件或错误引用位置；脚本研究模型读取检查反馈，调用 read_file 重读原文，再提出修订提交。完整修订响应落库后注入中断，关闭并重新构建数据库、存储、客户端和 Worker。新执行者直接执行原 pending 调用，复用同一正文、索引、来源 ID 和字符引用；只为实际新执行的工具及独立核对计数。首稿和离线模型均标记 fixture，这些轨迹验证执行与恢复行为，语义判断仍以单独的真实核对记录为证据。
+
+邮件场景先保存通过核对的提交意图，再由 `tests/phase_three_crash.py` 子进程启动生产 Worker/提交回调。子进程在 mail_queued 事务已 COMMIT、租约尚未释放时执行 os._exit(37)。重新打开数据库后可见一份简报、历史和 pending 邮件；推进测试时钟使旧租约过期，Worker 接管终态任务完成收尾。两次读取的窗口、截止时间、预算、来源/索引、邮件内容哈希和调用反馈一致，研究/核对请求与入队均未重复；本步不连接 SMTP。
+
+六个失败场景核对停止原因：两次检查不通过为 brief_revision_exhausted、核对鉴权错误为 tool_dependency_authentication、临时核对故障耗尽为 brief_review_service_failed、截止时间到达为 budget_deadline、预留后模型预算不足为 budget_model_requests、正文变化为 recovery_material_state_problem。任务结束后所有模型工具 ID 均有对应反馈，简报/历史/邮件计数为零，下一次轮询不重复执行失败任务。
+
+默认测试在 pytest 临时目录内保存 report.json、protocol.json 和数据库/正文。显式设置 NEWS_PHASE_THREE_RECORD=1 可将本步轨迹保留到 Git 忽略的 data/acceptance/phase-three-step-3.5/<场景>/<UUID>/，每次独立目录，不覆盖旧证据；正常测试不读取本地凭据。report.json 包含范围标记、重启前后状态、调用统计和安全时间线；protocol.json 是单独的受控协议文件。重放命令：
+
+```powershell
+$env:NEWS_PHASE_THREE_RECORD = "1"
+.venv\Scripts\python.exe -m pytest -q tests/test_phase_three.py
+Remove-Item Env:NEWS_PHASE_THREE_RECORD
+```
+
+设置 NEWS_REVIEW_LIVE=1 可独立执行 tests/test_review_live.py，核对数字、条件和真实模型修订；固定新闻与 HTTP 仍为 fixture。报告按本次 UTC 日期及 UUID 保存到 data/acceptance/review-live-<日期>/，保留先前日期目录。真实服务和 Docker 的实际结果、限制及阶段目标核对见 acceptance.md；未通过的联通不能计为验收成功。

@@ -5,6 +5,7 @@ import json
 import os
 import time
 from copy import deepcopy
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -39,7 +40,12 @@ pytestmark = pytest.mark.skipif(
 
 
 def environment(profile):
-    root = Path("data/acceptance/review-live-2026-10-13") / profile / uuid4().hex
+    root = (
+        Path("data/acceptance")
+        / f"review-live-{datetime.now(UTC):%Y-%m-%d}"
+        / profile
+        / uuid4().hex
+    )
     config = Settings(
         data_dir=root,
         deepseek_thinking_enabled=False,
