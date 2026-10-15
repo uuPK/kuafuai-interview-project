@@ -84,6 +84,10 @@ class Settings(BaseSettings):
         pattern=r"^[a-z0-9][a-z0-9._/-]*(?::[A-Za-z0-9._-]+|@sha256:[a-f0-9]{64})$",
     )
     bash_docker_host: str | None = Field(default=None, repr=False, exclude=True)
+    bash_data_volume: str | None = Field(
+        default=None, min_length=2, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]+$"
+    )
+    bash_socket_gid: int = Field(default=0, ge=0, le=4_294_967_294)
     bash_timeout_seconds: float = Field(default=10, gt=0, le=30, allow_inf_nan=False)
     bash_output_bytes: int = Field(default=24_000, ge=256, le=1_000_000)
     rss_sources_file: Path | None = Field(default=None, repr=False, exclude=True)

@@ -1,0 +1,10 @@
+{
+  "feeds": [
+    {
+      "feed_id": "nvidia-official",
+      "name": "NVIDIA 官方博客",
+      "url": "https://blogs.nvidia.com/feed/",
+      "enabled": true
+    }
+  ]
+}

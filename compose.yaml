@@ -1,0 +1,76 @@
+name: daily-ai-news
+
+x-application: &application
+  image: daily-ai-news-app:local
+  build:
+    context: .
+    dockerfile: docker/app/Dockerfile
+  env_file:
+    - path: ${NEWS_ENV_FILE:-.env}
+      required: true
+  environment: &environment
+    DATA_DIR: /data
+    RSS_SOURCES_FILE: /config/rss-sources.json
+    BASH_IMAGE: daily-ai-news-tools:local
+    BASH_DOCKER_HOST: unix:///var/run/docker.sock
+  volumes:
+    - news-data:/data
+    - ./config:/config:ro
+  user: "10001:10001"
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=32m,mode=1777
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 128
+  mem_limit: 768m
+  cpus: 1.0
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 45s
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  api:
+    <<: *application
+    ports: ["127.0.0.1:${NEWS_HTTP_PORT:-8000}:8000"]
+  worker:
+    <<: *application
+    command: [python, -m, app.worker]
+    environment:
+      <<: *environment
+      BASH_DATA_VOLUME: ${COMPOSE_PROJECT_NAME:-daily-ai-news}-data
+    volumes:
+      - news-data:/data
+      - ./config:/config:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add: ["${BASH_SOCKET_GID:-0}"]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -m, app.healthcheck, worker]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+  tools:
+    image: daily-ai-news-tools:local
+    profiles: [build]
+    build:
+      context: .
+      dockerfile: docker/tool/Dockerfile
+    network_mode: none
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    command: [--noprofile, --norc, -c, "exit 0"]
+
+volumes:
+  news-data:
+    name: ${COMPOSE_PROJECT_NAME:-daily-ai-news}-data

@@ -1,0 +1,12 @@
+*
+!pyproject.toml
+!uv.lock
+!app/
+!app/**
+!docker/
+!docker/**
+**/__pycache__
+**/*.py[cod]
+**/.env
+**/*.key
+**/*.pem

@@ -441,6 +441,18 @@ Docker 官方问题库有[同类启动错误报告](https://github.com/docker/de
 
 本轮结论仅覆盖上述网站功能与回归。真实 SMTP 参数缺失、DeepSeek 超时复验、真实新闻研究及人工核对继续待验收；阶段 5.1 未开始。README、真实 .env、用户更新的 AGENTS.md 与原有 YAML 未修改。
 
+## 步骤 5.1：镜像与 Compose
+
+2026-10-15 完成 API/Worker 共用多阶段应用镜像、独立工具镜像构建入口、Compose 命名持久卷、只读配置、内部健康探针和进程退出自动重启。应用按 uv.lock 冻结安装且不安装开发依赖，UID/GID 10001，根只读、临时目录/日志轮转/CPU/内存/PID 限制生效。API 只发布 127.0.0.1:8000，Docker socket 仅挂可信 Worker；工具按当前 run 的命名卷子目录只读挂载，其余隔离保持。
+
+当前 Windows 中文项目路径的 Compose/Bake 构建出现 x-docker-expose-session-sharedkey 非 ASCII 请求头错误；临时 ASCII 路径的白名单构建脚本已成功完成两种镜像，不改全局 Docker/代理设置。首次应用构建也发现 Debian 内置 news 组与计划用户名重名，修正为 dailynews 后通过。最终构建日志为 data/acceptance/build-step-5.1.log；开发依赖、.env、运行数据、Git 与用户文件均不进入构建上下文。
+
+健康/卷/构建上下文/Compose 展开新增 20 项；与 Bash、Worker、配置相关的最终回归 181 passed，新增测试与真实 Compose 合计 21 passed。真实 Engine 29.6.1、Compose 5.2.0 下，独立临时项目的 API/Worker 均 healthy，应用信号退出后 RestartCount 增加且重新 healthy，重启后订阅和任务仍可查询。预览在缺模型时明确失败，没有假称生成新闻或创建简报。
+
+从 one-off Worker 容器执行生产 write_file/bash，读取同一卷里的 scratch 文件；再通过可信测试探测实际 UID、不可写任务/根、无网络、无凭据/代理/socket，Docker inspect 验证只挂 runs/<run_id> 子目录、单一只读挂载、64 MB 与 32 PID。探针与工具临时资源均清理，测试仅按精确标签删除自己的项目卷。报告为 data/acceptance/tests-step-5.1-targeted.xml（21 passed）与 compose-step-5.1.json。
+
+新增配置 BASH_DATA_VOLUME、BASH_SOCKET_GID，并提供 config/rss-sources.json 的已验证 NVIDIA 来源；真实 .env 未修改，README 与用户维护文件保持原状。该步只验镜像、存储、权限和进程链路；真实供应商与邮箱未请求，5.2～5.5 继续交付与验收。
+
 ## 真实服务联通
 
 | 验收项 | 当前状态 | 完成条件 |

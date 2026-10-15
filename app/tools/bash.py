@@ -178,6 +178,17 @@ class DockerRunner:
         root = str(context.working_dir)
         if "," in root or '"' in root:
             raise ToolFailure("BASH_CONFIGURATION", "任务目录不适合 Docker bind mount 参数。")
+        mount = f"type=bind,src={root},dst=/work,readonly"
+        if self.settings.bash_data_volume:
+            expected = self.settings.data_dir / "runs" / context.run_id
+            if context.working_dir.resolve() != expected.resolve() or not re.fullmatch(
+                r"[A-Za-z0-9_-]+", context.run_id
+            ):
+                raise ToolFailure("BASH_CONFIGURATION", "任务目录与受控数据卷路径不一致。")
+            mount = (
+                f"type=volume,src={self.settings.bash_data_volume},dst=/work,readonly,"
+                f"volume-subpath=runs/{context.run_id}"
+            )
         host = self.settings.bash_docker_host or (
             "npipe:////./pipe/dockerDesktopLinuxEngine"
             if os.name == "nt"
@@ -205,7 +216,7 @@ class DockerRunner:
             "--log-driver=none",
             "--init",
             "--mount",
-            f"type=bind,src={root},dst=/work,readonly",
+            mount,
             "--workdir=/work",
             "--env=LANG=C.UTF-8",
             "--env=BASH_ENV=",
