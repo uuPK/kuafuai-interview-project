@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from app.agent.prompts import initial_messages
 from app.agent.protocol import ModelClient, ModelFailure, ModelRequest, ModelResponse
 from app.config import Settings
+from app.harness.execution import LeaseLostError
 from app.harness.failures import FailureInfo, RequestInProgressError, RetryDeferredError
 from app.storage.calls import CallConflictError, CallRecord, CallStatus
 from app.storage.conversations import ConversationConflictError, ConversationStore
@@ -183,6 +184,8 @@ class AgentRunner:
                     if failure.category in {"authentication", "quota", "configuration", "protocol"}
                     else "model_dependency_error"
                 )
+            except LeaseLostError:
+                raise
             except Exception:
                 failure, reason = FailureInfo(code="MODEL_INTERNAL_ERROR"), "model_internal_error"
             saved = self.requests.fail_attempt(

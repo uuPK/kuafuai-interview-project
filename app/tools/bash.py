@@ -1,13 +1,16 @@
 """A small read-only command grammar executed solely in credential-free Docker containers."""
 
 import asyncio
+import json
 import os
+import re
 import shlex
 import tempfile
 from pathlib import Path
 
 from pydantic import Field
 
+from app.harness.execution import check_current_execution
 from app.storage.snapshots import digest
 from app.tools.files import FileAccess, bounded_prefix
 from app.tools.models import ToolFailure, ToolParameters, ToolResult
@@ -21,7 +24,10 @@ class BashParameters(ToolParameters):
 def container_name(context):
     if not context.tool_call_id:
         raise PermissionError("Bash requires a server-bound call")
-    return "news-tool-" + digest(f"{context.run_id}:{context.tool_call_id}".encode())[:24]
+    identity = f"{context.run_id}:{context.tool_call_id}"
+    if context.execution_token:
+        identity += ":" + context.execution_token
+    return "news-tool-" + digest(identity.encode())[:24]
 
 
 class CommandPolicy:
@@ -216,6 +222,7 @@ class DockerRunner:
         return prefix, arguments
 
     async def execute(self, context, argv):
+        context.assert_current()
         name = container_name(context)
         runtime = self.settings.data_dir / "tool_runtime"
         runtime.mkdir(parents=True, exist_ok=True)
@@ -225,6 +232,7 @@ class DockerRunner:
             (config_dir / "config.json").write_text('{"auths":{},"proxies":{}}', encoding="utf-8")
             prefix, arguments = self.arguments(context, argv, name, config_dir)
             try:
+                check_current_execution()
                 return await self.cli(
                     arguments,
                     timeout=self.settings.bash_timeout_seconds,
@@ -237,6 +245,73 @@ class DockerRunner:
                     )
                 except ToolFailure:
                     pass  # A lost daemon may require Worker cleanup using this deterministic name.
+
+    async def cleanup_run(self, context):
+        """Remove only matching run-labelled tool containers before replaying any Bash call."""
+        context.assert_current()
+        runtime = self.settings.data_dir / "tool_runtime"
+        runtime.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=runtime, prefix="docker-cleanup-") as directory:
+            config = Path(directory)
+            (config / "config.json").write_text('{"auths":{},"proxies":{}}', encoding="utf-8")
+            prefix, _ = self.arguments(context, [], "unused", config)
+
+            async def absent(identifier):
+                code, out, _ = await self.cli(
+                    [*prefix, "ps", "-a", "--filter", "id=" + identifier, "--format", "{{.ID}}"],
+                    timeout=3,
+                    maximum=4096,
+                )
+                return code == 0 and not out.strip()
+
+            code, out, _ = await self.cli(
+                [
+                    *prefix,
+                    "ps",
+                    "-a",
+                    "--filter",
+                    "label=daily-ai-news.run=" + context.run_id,
+                    "--format",
+                    "{{.ID}} {{.Names}}",
+                ],
+                timeout=3,
+                maximum=24_000,
+            )
+            if code != 0:
+                raise ToolFailure(
+                    "BASH_CLEANUP_UNAVAILABLE", "无法检查残留工具容器，恢复尚未执行。"
+                )
+            removed = 0
+            for line in out.splitlines():
+                match = re.fullmatch(r"([a-f0-9]{12,64}) (news-tool-[a-f0-9]{24})", line.strip())
+                if match is None:
+                    raise ToolFailure("BASH_CLEANUP_STATE_PROBLEM", "容器清单不符合受控工具格式。")
+                identifier = match[1]
+                code, labels, _ = await self.cli(
+                    [*prefix, "inspect", "--format", "{{json .Config.Labels}}", identifier],
+                    timeout=3,
+                    maximum=4096,
+                )
+                try:
+                    owned = json.loads(labels).get("daily-ai-news.run") == context.run_id
+                except (ValueError, AttributeError):
+                    owned = False
+                if code != 0 and await absent(identifier):
+                    continue
+                if code != 0 or not owned:
+                    raise ToolFailure("BASH_CLEANUP_STATE_PROBLEM", "残留容器归属无法确认。")
+                check_current_execution()
+                code, _, _ = await self.cli(
+                    [*prefix, "rm", "-f", identifier], timeout=3, maximum=4096
+                )
+                if code != 0 and await absent(identifier):
+                    continue
+                if code != 0:
+                    raise ToolFailure(
+                        "BASH_CLEANUP_UNAVAILABLE", "残留工具容器未能清理，恢复尚未执行。"
+                    )
+                removed += 1
+            return removed
 
 
 class BashTool:

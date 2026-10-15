@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AnyHttpUrl, Field, SecretStr, field_validator
+from pydantic import AnyHttpUrl, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ServiceName = Literal["deepseek", "bocha", "smtp", "session"]
@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     max_model_input_chars: int = Field(default=120_000, ge=1)
     max_model_response_bytes: int = Field(default=2_000_000, ge=256)
     max_review_context_chars: int = Field(default=8000, ge=256, le=50_000)
+    worker_lease_seconds: float = Field(default=30, ge=3, le=3600, allow_inf_nan=False)
+    worker_heartbeat_seconds: float = Field(default=5, ge=0.1, le=30, allow_inf_nan=False)
+    worker_poll_seconds: float = Field(default=1, ge=0.05, le=30, allow_inf_nan=False)
     max_material_file_bytes: int = Field(default=16_100_000, ge=1)
     max_material_scan_bytes: int = Field(default=32_200_000, ge=1)
     max_material_files: int = Field(default=200, ge=1, le=2000)
@@ -150,6 +153,12 @@ class Settings(BaseSettings):
     @property
     def database_path(self) -> Path:
         return self.data_dir / "news.sqlite3"
+
+    @model_validator(mode="after")
+    def validate_worker_timing(self):
+        if self.worker_lease_seconds < 3 * self.worker_heartbeat_seconds:
+            raise ValueError("worker lease must allow at least three heartbeat intervals")
+        return self
 
     def missing_service_fields(self, service: ServiceName) -> list[str]:
         """Report names only; missing live credentials do not block stub startup."""

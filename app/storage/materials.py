@@ -10,6 +10,7 @@ from uuid import uuid4
 from pydantic import Field, model_validator
 
 from app.agent.research import selection_notes
+from app.harness.execution import file_publication
 from app.harness.redaction import Redactor
 from app.storage.models import StoredModel
 from app.storage.snapshots import SnapshotFiles, _safe_path, digest
@@ -102,6 +103,7 @@ class MaterialStore:
         )
 
     def write(self, context, path, target: Path, content, current_hash):
+        context.assert_current()
         raw = content.encode("utf-8")
         desired = digest(raw)
         intent_path = self.job_path(context)
@@ -172,7 +174,11 @@ class MaterialStore:
                 file.write(raw)
                 file.flush()
                 os.fsync(file.fileno())
-            os.replace(temporary, target)
+            with file_publication():
+                latest = digest(self.files._read(target)) if target.exists() else None
+                if latest != job.original_hash:
+                    raise ToolFailure("FILE_WRITE_CONFLICT", "文件在发布前已变化，请重新读取。")
+                os.replace(temporary, target)
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)

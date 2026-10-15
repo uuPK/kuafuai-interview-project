@@ -19,6 +19,8 @@ RESERVED_FIELDS = {
     "working_dir",
     "settings",
     "api_key",
+    "execution_token",
+    "worker_id",
 }
 Handler = Callable[[ToolContext, ToolParameters], Awaitable[ToolResult]]
 CompletionStatus = Literal["completed", "no_news"]

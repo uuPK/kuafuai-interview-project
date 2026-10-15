@@ -408,9 +408,11 @@ def test_v8_migration_preserves_materials_and_rolls_back(tool_env, monkeypatch):
     env = tool_env
     old = Database(env.settings.data_dir / "v7.sqlite3")
     original = database_module.SCHEMA_V8
+    worker_schema = database_module.SCHEMA_V11
     review_schema = database_module.SCHEMA_V10
     submission_schema = database_module.SCHEMA_V9
     monkeypatch.setattr(database_module, "SCHEMA_V8", ())
+    monkeypatch.setattr(database_module, "SCHEMA_V11", ())
     monkeypatch.setattr(database_module, "SCHEMA_V10", ())
     monkeypatch.setattr(database_module, "SCHEMA_V9", ())
     old.initialize()
@@ -431,6 +433,7 @@ def test_v8_migration_preserves_materials_and_rolls_back(tool_env, monkeypatch):
     monkeypatch.setattr(database_module, "SCHEMA_V8", original)
     monkeypatch.setattr(database_module, "SCHEMA_V9", submission_schema)
     monkeypatch.setattr(database_module, "SCHEMA_V10", review_schema)
+    monkeypatch.setattr(database_module, "SCHEMA_V11", worker_schema)
     old.initialize()
     old.initialize()
     assert runs.get_run(previous.id, "user-1") == previous

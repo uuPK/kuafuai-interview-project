@@ -5,6 +5,7 @@ import re
 
 from app.agent.briefs import ReviewOutcome
 from app.agent.protocol import InputMessage, ModelFailure, ModelRequest, ModelResponse
+from app.harness.execution import LeaseLostError
 from app.harness.redaction import Redactor
 from app.storage.reviews import ReviewStore
 from app.storage.runs import BudgetExceededError
@@ -331,6 +332,8 @@ class IndependentReviewer:
             raise ToolFailure(
                 "BRIEF_REVIEW_TIMEOUT", "独立核对请求超时，未批准简报。", retryable=True
             ) from None
+        except LeaseLostError:
+            raise
         except Exception:
             raise ToolFailure(
                 "BRIEF_REVIEW_PROTOCOL", "独立核对服务返回了无效响应。", category="protocol"

@@ -16,7 +16,7 @@ class SourceStore:
         self.database = candidates.database
         self.files = SnapshotFiles(settings.data_dir, settings.max_download_bytes)
 
-    def get_source(self, run_id, user_id, source_id):
+    def get_source(self, run_id, user_id, source_id, *, repair_index=False):
         with self.database.connection() as connection:
             self.runs._owned_row(connection, run_id, user_id)
             row = connection.execute(
@@ -44,6 +44,8 @@ class SourceStore:
                     "SOURCE_STATE_PROBLEM", "数据库中的来源元数据或索引不完整。"
                 ) from None
         context = bind_context(self.runs, self.settings.data_dir, run_id, user_id)
+        if repair_index:
+            self.files.restore_index(context, metadata, index)
         self.files.verify(context, metadata, index)
         return metadata, index
 

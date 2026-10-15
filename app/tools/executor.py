@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pydantic import ValidationError
 
 from app.config import Settings
+from app.harness.execution import CURRENT_CLAIM, LeaseLostError
 from app.harness.failures import (
     FATAL_CATEGORIES,
     FailureInfo,
@@ -123,6 +124,65 @@ class ToolExecutor:
     def _in_progress() -> ToolResult:
         return ToolResult.failure(
             "CALL_IN_PROGRESS", "该调用尚未完成，需等待执行或恢复。", retryable=True
+        )
+
+    async def replay_local(self, run_id, user_id, invocation, *, on_finished=None):
+        """Trusted recovery only: reuse a charged call for local/idempotent publication."""
+        if CURRENT_CLAIM.get() is None:
+            raise LeaseLostError("local replay requires a worker claim")
+        record = self.calls.get_call(run_id, user_id, invocation.tool_call_id)
+        if (
+            record.status != CallStatus.EXECUTING
+            or record.invocation_hash != invocation.fingerprint
+        ):
+            raise CallConflictError("only the same executing call may be replayed")
+        definition = self.registry.get(invocation.name)
+        failure = None
+        try:
+            parameters = self._arguments(definition, invocation)
+            context = bind_context(
+                self.calls.runs,
+                self.settings.data_dir,
+                run_id,
+                user_id,
+                tool_call_id=invocation.tool_call_id,
+            )
+            remaining = (context.deadline_at - self.calls.runs.now()).total_seconds()
+            result = ToolResult.model_validate(
+                await asyncio.wait_for(
+                    definition.handler(context, parameters),
+                    timeout=max(0, min(self.settings.request_timeout_seconds, remaining)),
+                )
+            )
+        except LeaseLostError:
+            raise
+        except ToolFailure as error:
+            result, failure = error.result, error.info
+        except (ValidationError, ValueError, RecursionError) as error:
+            result = self._argument_error(definition, error)
+        except PermissionError:
+            result = ToolResult.failure("PERMISSION_DENIED", "恢复调用超出当前任务权限。")
+        except TimeoutError:
+            result = ToolResult.failure("TOOL_TIMEOUT", "恢复执行超时。", retryable=True)
+        except Exception:
+            result = ToolResult.failure("RECOVERY_TOOL_ERROR", "恢复执行失败，未假定调用成功。")
+        result = self._normalize(result)
+        request = self.requests.for_tool(run_id, user_id, invocation.tool_call_id)
+        stop_reason = None
+        if not result.ok and request is not None and request.status == "executing":
+            info = failure or FailureInfo(code=result.error.code)
+            self.requests.fail_attempt(
+                request.id,
+                user_id,
+                info.model_copy(update={"retryable": False}),
+                self.settings,
+                feedback=result,
+            )
+        if self.calls.runs.now() >= self.calls.runs.get_run(run_id, user_id).deadline_at:
+            result = ToolResult.failure("BUDGET_EXCEEDED", "任务截止时间已到，恢复未继续交付。")
+            stop_reason = "retry_deadline"
+        return self.finish(
+            run_id, user_id, invocation, result, on_finished=on_finished, stop_reason=stop_reason
         )
 
     async def execute(
@@ -258,6 +318,8 @@ class ToolExecutor:
                 )
             except PermissionError:
                 result = ToolResult.failure("PERMISSION_DENIED", "工具访问超出当前任务权限。")
+            except LeaseLostError:
+                raise
             except Exception:
                 result = ToolResult.failure("INTERNAL_TOOL_ERROR", "工具执行失败，请调整行动。")
             try:

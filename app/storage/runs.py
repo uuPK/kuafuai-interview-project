@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from app.config import Settings
+from app.harness.execution import assert_execution
 from app.storage.database import Database
 from app.storage.models import (
     BudgetCharge,
@@ -80,6 +81,7 @@ class RunStore:
         ).fetchone()
         if row is None:
             raise RunNotFoundError("run not found")
+        assert_execution(connection, run_id, writing=connection.in_transaction)
         return row
 
     @staticmethod
@@ -87,6 +89,7 @@ class RunStore:
         connection: sqlite3.Connection, run_id: str, kind: str, at: datetime, data: dict
     ) -> None:
         """Only application-generated state/counter fields are recorded in this step."""
+        assert_execution(connection, run_id, writing=True)
         connection.execute(
             "INSERT INTO run_events (run_id, kind, occurred_at, data_json) VALUES (?, ?, ?, ?)",
             (run_id, kind, timestamp(at), json.dumps(data, ensure_ascii=False)),

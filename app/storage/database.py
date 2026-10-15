@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from app.harness.execution import assert_execution
 from app.storage.schema import (
     SCHEMA_V1,
     SCHEMA_V2,
@@ -16,6 +17,7 @@ from app.storage.schema import (
     SCHEMA_V8,
     SCHEMA_V9,
     SCHEMA_V10,
+    SCHEMA_V11,
     SCHEMA_VERSION,
 )
 
@@ -63,7 +65,9 @@ class Database:
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Serialize writes; rollback state and its timeline together on any failure."""
         with self.connection() as connection, self._transaction(connection):
+            assert_execution(connection)
             yield connection
+            assert_execution(connection)
 
     def initialize(self) -> None:
         """Create schema atomically, preserve existing records, reject future versions."""
@@ -114,5 +118,9 @@ class Database:
                     version = 9
                 if version == 9:
                     for statement in SCHEMA_V10:
+                        connection.execute(statement)
+                    version = 10
+                if version == 10:
+                    for statement in SCHEMA_V11:
                         connection.execute(statement)
                 connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

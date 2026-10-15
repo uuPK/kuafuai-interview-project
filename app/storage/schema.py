@@ -1,6 +1,6 @@
 """Versioned SQLite schema, introduced incrementally with implementation steps."""
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 SCHEMA_V1 = (
     """
@@ -302,4 +302,18 @@ SCHEMA_V10 = (
         FOREIGN KEY (run_id, tool_call_id)
             REFERENCES tool_calls(run_id, tool_call_id) ON DELETE CASCADE
     )""",
+)
+
+SCHEMA_V11 = (
+    """CREATE TABLE worker_instances (
+        id TEXT PRIMARY KEY, started_at TEXT NOT NULL, heartbeat_at TEXT NOT NULL,
+        stopped_at TEXT
+    )""",
+    """CREATE TABLE run_leases (
+        run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+        worker_id TEXT NOT NULL REFERENCES worker_instances(id), token TEXT NOT NULL UNIQUE,
+        heartbeat_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+        CHECK (heartbeat_at < expires_at)
+    )""",
+    "CREATE INDEX run_leases_expiry ON run_leases(expires_at)",
 )

@@ -57,7 +57,9 @@ class RequestStore:
             from app.storage.runs import RunNotFoundError
 
             raise RunNotFoundError("request not found")
-        return _request(row)
+        record = _request(row)
+        self.runs._owned_row(connection, record.run_id, user_id)
+        return record
 
     def get(self, request_id: str, user_id: str) -> RequestRecord:
         with self.database.connection() as connection:

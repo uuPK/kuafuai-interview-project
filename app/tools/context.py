@@ -4,6 +4,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PureWindowsPath
 
+from app.harness.execution import (
+    CURRENT_CLAIM,
+    LeaseLostError,
+    assert_execution,
+    check_current_execution,
+)
 from app.storage.runs import RunStore
 
 
@@ -17,9 +23,20 @@ class ToolContext:
     window_end: datetime
     deadline_at: datetime | None
     tool_call_id: str | None = None
+    execution_token: str | None = field(default=None, repr=False)
+
+    def assert_current(self):
+        check_current_execution()
+        current = CURRENT_CLAIM.get()
+        if current is not None and current.run_id != self.run_id:
+            raise LeaseLostError("tool context belongs to another run")
+        if self.execution_token is not None:
+            if current is None or current.token != self.execution_token:
+                raise LeaseLostError("tool context belongs to a previous execution")
 
     def resolve_path(self, path: str, *, write: bool = False) -> Path:
         """Resolve task-relative paths; writes are restricted to scratch, including symlinks."""
+        self.assert_current()
         windows_path = PureWindowsPath(path)
         if not path or "\x00" in path or windows_path.drive or windows_path.root:
             raise PermissionError("path must be relative to the task directory")
@@ -44,6 +61,8 @@ def bind_context(
     runs: RunStore, data_dir: Path, run_id: str, user_id: str, *, tool_call_id: str | None = None
 ) -> ToolContext:
     run = runs.get_run(run_id, user_id)
+    with runs.database.connection() as connection:
+        assert_execution(connection, run_id, writing=True)
     data_root = data_dir.resolve()
     base = data_root / "runs"
     expected = base / run.id
@@ -59,4 +78,5 @@ def bind_context(
         window_end=run.window_end,
         deadline_at=run.deadline_at,
         tool_call_id=tool_call_id,
+        execution_token=CURRENT_CLAIM.get().token if CURRENT_CLAIM.get() is not None else None,
     )
