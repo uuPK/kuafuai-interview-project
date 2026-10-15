@@ -560,8 +560,10 @@ def test_v9_migration_rolls_back_and_is_idempotent(tmp_path, monkeypatch):
     db = Database(tmp_path / "migration.sqlite3")
     schema = database_module.SCHEMA_V9
     worker_schema = database_module.SCHEMA_V11
+    delivery_schema = database_module.SCHEMA_V12
     review_schema = database_module.SCHEMA_V10
     monkeypatch.setattr(database_module, "SCHEMA_V11", ())
+    monkeypatch.setattr(database_module, "SCHEMA_V12", ())
     monkeypatch.setattr(database_module, "SCHEMA_V10", ())
     monkeypatch.setattr(database_module, "SCHEMA_V9", ())
     db.initialize()
@@ -578,6 +580,7 @@ def test_v9_migration_rolls_back_and_is_idempotent(tmp_path, monkeypatch):
     monkeypatch.setattr(database_module, "SCHEMA_V9", schema)
     monkeypatch.setattr(database_module, "SCHEMA_V10", review_schema)
     monkeypatch.setattr(database_module, "SCHEMA_V11", worker_schema)
+    monkeypatch.setattr(database_module, "SCHEMA_V12", delivery_schema)
     db.initialize()
     db.initialize()
     with db.connection() as connection:
@@ -783,6 +786,7 @@ def test_v9_upgrade_preserves_sources_history_and_progress(brief_env):
                 env.run.updated_at.isoformat(),
             ),
         )
+        connection.execute("DROP TABLE mail_outbox")
         connection.execute("DROP TABLE run_leases")
         connection.execute("DROP TABLE worker_instances")
         connection.execute("DROP TABLE brief_reviews")

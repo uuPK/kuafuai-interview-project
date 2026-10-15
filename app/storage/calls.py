@@ -6,6 +6,7 @@ from enum import StrEnum
 
 from pydantic import AwareDatetime
 
+from app.harness.trace import argument_summary, result_summary
 from app.storage.models import BudgetCharge, StoredModel, timestamp
 from app.storage.runs import RunStore, _record
 from app.tools.models import ToolInvocation, ToolResult
@@ -109,6 +110,9 @@ class CallStore:
                     "tool_call_id": call.tool_call_id,
                     "name": call.name,
                     "arguments_chars": len(call.arguments),
+                    "parameters": self.runs.projection.data(
+                        argument_summary(call.name, call.arguments)
+                    ),
                 },
             )
         return [_call_record(self._row(connection, run_id, call.tool_call_id)) for call in calls]
@@ -207,6 +211,10 @@ class CallStore:
                 "ok": result.ok,
                 "error_code": result.error.code if result.error else None,
                 "result_chars": len(result.model_dump_json()),
+                "elapsed_ms": max(0, int((at - call.started_at).total_seconds() * 1000))
+                if call.started_at is not None
+                else None,
+                "result_summary": result_summary(result),
             },
         )
         completed = _call_record(self._row(connection, run_id, call_id))

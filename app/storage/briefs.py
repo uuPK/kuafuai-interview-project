@@ -10,6 +10,7 @@ from app.agent.briefs import BriefDocument, BriefDraft, SubmitParameters
 from app.agent.research import HistoryEvent
 from app.harness.failures import FATAL_CATEGORIES, FailureInfo
 from app.storage.models import StateChange, StoredModel, timestamp
+from app.storage.outbox import OutboxStore
 from app.storage.runs import _record
 from app.storage.snapshots import SourceMetadata
 from app.tools.context import bind_context
@@ -39,9 +40,12 @@ class SubmissionJob(StoredModel):
 
 
 class BriefStore:
-    def __init__(self, research, rules):
+    def __init__(self, research, rules, *, outbox=None):
         self.research, self.rules = research, rules
         self.runs, self.calls, self.database = research.runs, research.calls, research.database
+        self.outbox = outbox or OutboxStore(self.runs)
+        if self.outbox.runs is not self.runs:
+            raise ValueError("brief and outbox must share their run store")
 
     @staticmethod
     def _problem():
@@ -243,6 +247,7 @@ class BriefStore:
                 for item in job.draft.items
             )
             self.research.record_delivery(connection, run.id, run.user_id, job.brief_id, events)
+        self.outbox.reserve(connection, run.id, run.user_id, job.brief_id)
         self.runs._append_event(
             connection,
             run.id,
@@ -254,6 +259,11 @@ class BriefStore:
                 "item_count": len(job.draft.items),
                 "review_basis": job.review_basis,
                 "duplicate_hints": list(checked.duplicate_hints),
+                "items": [
+                    {"title": item.title, "selection_reason": item.selection_reason}
+                    for item in job.draft.items
+                ],
+                "basis": "model_reported",
             },
         )
 

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from app.agent.brief_rules import BriefRules
 from app.agent.review import IndependentReviewer
+from app.harness.trace import configure_event_logging
 from app.providers.bocha import BochaClient
 from app.providers.deepseek import DeepSeekClient
 from app.providers.feeds import FeedCatalog, FeedClient
@@ -18,6 +19,7 @@ from app.storage.materials import MaterialStore
 from app.storage.research import ResearchStore
 from app.storage.runs import RunStore
 from app.storage.sources import SourceStore
+from app.storage.timeline import TimelineStore
 from app.tools.bash import register_bash
 from app.tools.executor import ToolExecutor
 from app.tools.feed import register_feed
@@ -31,6 +33,7 @@ from app.tools.submit import register_submission
 
 @asynccontextmanager
 async def open_runtime(configured, *, database=None):
+    configure_event_logging()
     database = database or Database(configured.database_path)
     application = SimpleNamespace(state=SimpleNamespace(settings=configured, database=database))
     database.initialize()
@@ -73,6 +76,8 @@ async def open_runtime(configured, *, database=None):
         register_research(registry, research, configured)
         briefs = BriefStore(research, BriefRules(sources, configured))
         application.state.brief_store = briefs
+        application.state.outbox_store = briefs.outbox
+        application.state.timeline_store = TimelineStore(application.state.run_store)
         reviewer = IndependentReviewer(model, research, sources, configured)
         application.state.brief_reviewer = reviewer
         register_submission(registry, briefs, reviewer=reviewer)

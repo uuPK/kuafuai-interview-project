@@ -1,6 +1,6 @@
 # 开发与配置
 
-当前完成步骤 3.3 的 Worker 与离线恢复链路：原子领取任务、独立心跳、执行者校验和中断调用接管已接入；新增真实容器残留清理测试因本机 Docker 引擎未就绪待补验。结构化提交、独立 DeepSeek 核对和最多两次提交沿用 3.1～3.2；发送记录、时间线查询与页面按后续步骤推进。
+当前完成步骤 3.4：定时简报的待发送邮件与简报/历史/工具反馈原子保存，新增按用户查询的安全时间线和提交后 JSON 日志。原有模型研究、核对修订和 Worker 恢复继续沿用；3.3 的真实 Docker 残留清理待补验。登录、订阅接口、页面、调度和 SMTP 按阶段 4 推进。
 
 ## 本地环境
 
@@ -249,3 +249,19 @@ SQLite v11 增加 worker_instances 和 run_leases，原子升级保留既有任�
 临时清理只遍历当前 run、source_jobs/run 和 file_jobs/run 的受限目录，只删除 `.pending-*` 普通文件，拒绝链接和路径逃逸；正文、笔记、其他任务及项目文件均保留。Bash 容器名增加本次执行能力的哈希，旧执行者退出时无法误删新一代容器。接管通过固定 Docker 参数查询本任务标签，再核对容器名与实际标签，仅按已确认 ID 清理；Docker 不可用或归属不明则停止恢复。Docker 配置仍为空认证/代理，命令权限与原隔离参数保持一致。
 
 离线测试入口为 `tests/test_worker.py`、`tests/test_recovery.py`、`tests/test_worker_bash.py`，含真实子进程在文件替换后强制退出再接管的用例。`tests/test_recovery_docker_live.py` 需显式设置 NEWS_DOCKER_LIVE=1，验证清理旧执行者容器、保留另一任务容器并重新执行受限 Bash；可与 `tests/test_docker_live.py` 一起运行。2026-10-15 本机 Docker Desktop 启动超时，此项真实清理及五项既有容器回归待补验，详细结果见验收记录。
+
+## 交付事务与时间线（3.4）
+
+`app/storage/briefs.py` 的提交完成回调继续核对原提交意图与来源，然后在同一短事务内更新 completed/no_news、保存简报、登记事件历史、调用 `OutboxStore.reserve` 预留待发送邮件，并完成工具结果及成对反馈。任一环节失败全部回滚；核对意图仍可复用，Worker 恢复同一调用时不重复核对或入队。公开模型参数保持不变，收件人、邮件正文和发送状态由可信应用代码决定。
+
+SQLite v12 增加 mail_outbox，以 brief_id 为主键、run_id 为唯一键，保存固定 recipient/subject/body_text、内容哈希、status、attempts 及创建/更新时间。3.4 只创建 pending/0 次的记录，schema 预留 pending/sending/sent/failed/unknown。邮件正文从已保存的 BriefDocument 生成，包含中文标题/摘要、入选理由、服务端来源链接、固定新闻窗口和不足/未覆盖说明；有效空简报同样可入队，研究失败不能入队。邮箱只接受单个 ASCII 地址并拒绝换行、多收件人和显示名称，主题合并空白避免注入邮件头。
+
+预览任务保存内容后结束；定时任务入队前检查订阅快照开关。`OutboxStore(runs, delivery_enabled=...)` 可注入可信同步检查函数，参数为当前事务 connection 和 run，必须明确返回 bool；阶段 4 的实时订阅存储通过这里执行暂停检查。当前生产默认读取固定快照，实时订阅表/接口尚待 4.2，发送前再次检查在 4.5 接入。关闭时保留研究内容并记录 mail_suppressed，不创建发送记录。记录查询 `outbox_store.get(brief_id,user_id)` 校验用户归属与内容哈希，属于可信发送器接口，不能整体暴露给模型或页面。数据库升级保留已有简报；待发送记录由升级后的新提交事务创建。
+
+`app/storage/timeline.py` 提供 `timeline_store.page(run_id,user_id,after_id=0,limit=50)`，cursor 为最后事件 ID，limit 接受严格整数 1～100，返回当前状态、停止原因、events、next_after_id 和 has_more。按 ID 稳定排序和分页，缺失任务与其他用户任务统一返回不存在。runtime 同时装配 outbox_store 和 timeline_store，供后续已认证的 API 调用；本步不新增未认证任务接口。
+
+时间线只投影白名单元数据：工具名及有界参数摘要、成功/错误和字段问题、发现/来源引用、进度/选题理由、提交修订、领取/恢复/入队结果、请求标识、耗时与有限 token 统计。write_file 只记录路径与内容长度；submit_brief 只记录条数，原稿、笔记正文、完整模型协议、reasoning_content、Cookie、收件人和执行 token 不进入投影。单字符串最多 500 字符，列表最多 20 项，嵌套深度及单事件数据投影 12,000 字符受限，过大时明确省略。事件标题由服务端映射；原因来自模型记录或已保存反馈，缺失时 reason_basis=missing，不补造行动理由。旧事件查询时同样经过投影和脱敏。
+
+`app/harness/trace.py` 的 app.events logger 输出一行一个 JSON，包含 event_id/run_id/event/occurred_at/data；API 和 Worker 共用启动设置。数据库事件在业务事务内保存，`Database.transaction` 提交并释放写锁后才输出本事务日志。日志处理器异常不会改变已提交结果；提交后、日志输出前进程退出可能缺少控制台行，SQLite 时间线仍为追溯依据。事件写入过滤配置凭据和认证字段，时间线/日志再次过滤白名单、邮箱、凭据赋值和大小；完整协议继续保存在现有受控表。无需新增配置或依赖。
+
+离线测试入口为 `tests/test_delivery.py`、`tests/test_timeline.py`，覆盖三个事务中断位置、同意图恢复、并发重复入队、跨用户读取、有效空简报、暂停检查接缝、邮箱注入、固定内容损坏、v11→v12 回滚、时间线分页/损坏、协议保留与投影隔离、只输出已提交事件及日志故障。本步没有发送邮件或新增模型/搜索请求；真实 SMTP 联通继续待 4.5。

@@ -378,6 +378,7 @@ def test_v11_migration_rollback_preserves_runs(harness, monkeypatch):
     env = harness()
     before = env.runs.get_run(env.run.id, "user-1")
     with env.database.connection() as connection:
+        connection.execute("DROP TABLE mail_outbox")
         connection.execute("DROP TABLE run_leases")
         connection.execute("DROP TABLE worker_instances")
         connection.execute("PRAGMA user_version=10")

@@ -271,6 +271,11 @@ class RequestStore:
                     "request_id": request.id,
                     "attempt": request.attempts,
                     "category": failure.category,
+                    "error_code": failure.code,
+                    "elapsed_ms": max(0, int((at - request.updated_at).total_seconds() * 1000)),
+                    "provider_request_id": failure.diagnostics.provider_request_id
+                    if failure.diagnostics
+                    else None,
                     "retryable": failure.retryable,
                     "retry_at": timestamp(retry_at) if retry_at else None,
                     "stop_reason": reason,

@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from app.config import Settings
 from app.harness.execution import assert_execution
+from app.harness.trace import EventProjection
 from app.storage.database import Database
 from app.storage.models import (
     BudgetCharge,
@@ -70,6 +71,8 @@ class RunStore:
         self.database = database
         self.budget_limits = BudgetLimits.from_settings(settings)
         self.clock = clock or (lambda: datetime.now(UTC))
+        self.projection = EventProjection(settings)
+        self.database.event_sink = self.projection.emit
 
     def now(self, value: datetime | None = None) -> datetime:
         return as_utc(value if value is not None else self.clock())
@@ -84,12 +87,12 @@ class RunStore:
         assert_execution(connection, run_id, writing=connection.in_transaction)
         return row
 
-    @staticmethod
     def _append_event(
-        connection: sqlite3.Connection, run_id: str, kind: str, at: datetime, data: dict
+        self, connection: sqlite3.Connection, run_id: str, kind: str, at: datetime, data: dict
     ) -> None:
-        """Only application-generated state/counter fields are recorded in this step."""
+        """Keep event metadata separate from controlled protocol, with credentials removed."""
         assert_execution(connection, run_id, writing=True)
+        data = self.projection.redactor.clean(json.loads(json.dumps(data, ensure_ascii=False)))
         connection.execute(
             "INSERT INTO run_events (run_id, kind, occurred_at, data_json) VALUES (?, ?, ?, ?)",
             (run_id, kind, timestamp(at), json.dumps(data, ensure_ascii=False)),
@@ -247,7 +250,7 @@ class RunStore:
                     run_id=row["run_id"],
                     kind=row["kind"],
                     occurred_at=row["occurred_at"],
-                    data=json.loads(row["data_json"]),
+                    data=self.projection.redactor.clean(json.loads(row["data_json"])),
                 )
                 for row in rows
             ]

@@ -1,6 +1,7 @@
 """Bind an independent review input/response to one durable submission call."""
 
 import json
+from datetime import datetime
 
 from app.agent.protocol import ModelRequest, ModelResponse
 from app.harness.redaction import Redactor
@@ -117,11 +118,18 @@ class ReviewStore:
                 "UPDATE brief_reviews SET response_json=? WHERE run_id=? AND tool_call_id=?",
                 (response.model_dump_json(), context.run_id, context.tool_call_id),
             )
+            started = connection.execute(
+                "SELECT occurred_at FROM run_events WHERE run_id=? "
+                "AND kind='brief_review_attempt_started' "
+                "AND json_extract(data_json,'$.tool_call_id')=? ORDER BY id DESC LIMIT 1",
+                (context.run_id, context.tool_call_id),
+            ).fetchone()
+            at = self.runs.now()
             self.runs._append_event(
                 connection,
                 context.run_id,
                 "brief_review_completed",
-                self.runs.now(),
+                at,
                 {
                     "tool_call_id": context.tool_call_id,
                     "approved": outcome.approved if outcome is not None else None,
@@ -135,6 +143,11 @@ class ReviewStore:
                         and value >= 0
                     },
                     "response_id": response.response_id,
+                    "elapsed_ms": max(
+                        0, int((at - datetime.fromisoformat(started[0])).total_seconds() * 1000)
+                    )
+                    if started
+                    else None,
                 },
             )
 

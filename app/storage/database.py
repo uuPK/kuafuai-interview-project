@@ -18,6 +18,7 @@ from app.storage.schema import (
     SCHEMA_V9,
     SCHEMA_V10,
     SCHEMA_V11,
+    SCHEMA_V12,
     SCHEMA_VERSION,
 )
 
@@ -34,6 +35,7 @@ class Database:
             raise ValueError("busy_timeout_ms must be between 1 and 60000")
         self.path = Path(path).expanduser().resolve()
         self.busy_timeout_ms = busy_timeout_ms
+        self.event_sink = None
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
@@ -64,10 +66,29 @@ class Database:
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Serialize writes; rollback state and its timeline together on any failure."""
-        with self.connection() as connection, self._transaction(connection):
-            assert_execution(connection)
-            yield connection
-            assert_execution(connection)
+        with self.connection() as connection:
+            with self._transaction(connection):
+                assert_execution(connection)
+                before = (
+                    connection.execute("SELECT COALESCE(MAX(id),0) FROM run_events").fetchone()[0]
+                    if self.event_sink is not None
+                    else None
+                )
+                yield connection
+                assert_execution(connection)
+                events = (
+                    connection.execute(
+                        "SELECT * FROM run_events WHERE id>? ORDER BY id", (before,)
+                    ).fetchall()
+                    if before is not None
+                    else []
+                )
+            # Logging is a projection of committed events, outside the SQLite write lock.
+            for event in events:
+                try:
+                    self.event_sink(event)
+                except Exception:
+                    pass  # A broken log handler must not turn committed delivery into a retry.
 
     def initialize(self) -> None:
         """Create schema atomically, preserve existing records, reject future versions."""
@@ -122,5 +143,9 @@ class Database:
                     version = 10
                 if version == 10:
                     for statement in SCHEMA_V11:
+                        connection.execute(statement)
+                    version = 11
+                if version == 11:
+                    for statement in SCHEMA_V12:
                         connection.execute(statement)
                 connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

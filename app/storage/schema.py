@@ -1,6 +1,6 @@
 """Versioned SQLite schema, introduced incrementally with implementation steps."""
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 SCHEMA_V1 = (
     """
@@ -316,4 +316,17 @@ SCHEMA_V11 = (
         CHECK (heartbeat_at < expires_at)
     )""",
     "CREATE INDEX run_leases_expiry ON run_leases(expires_at)",
+)
+
+SCHEMA_V12 = (
+    """CREATE TABLE mail_outbox (
+        brief_id TEXT PRIMARY KEY REFERENCES briefs(id) ON DELETE CASCADE,
+        run_id TEXT NOT NULL UNIQUE REFERENCES runs(id) ON DELETE CASCADE,
+        recipient TEXT NOT NULL, subject TEXT NOT NULL, body_text TEXT NOT NULL,
+        payload_hash TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending','sending','sent','failed','unknown')),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )""",
+    "CREATE INDEX mail_outbox_status ON mail_outbox(status, created_at)",
 )

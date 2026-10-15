@@ -140,6 +140,7 @@ class ConversationStore:
                 "SELECT COALESCE(MAX(turn), 0) + 1 FROM model_responses WHERE run_id = ?", (run_id,)
             ).fetchone()[0]
             at = self.runs.now()
+            elapsed_ms = None
             if request_id is not None:
                 request = self.requests._owned(connection, request_id, user_id)
                 if (
@@ -151,6 +152,7 @@ class ConversationStore:
                         "response must belong to an executing model request"
                     )
                 self.requests._complete(connection, request_id, user_id)
+                elapsed_ms = max(0, int((at - request.updated_at).total_seconds() * 1000))
             connection.execute(
                 """INSERT INTO model_responses
                     (run_id, turn, response_json, created_at, request_id) VALUES (?, ?, ?, ?, ?)""",
@@ -168,7 +170,20 @@ class ConversationStore:
                 run_id,
                 "model_response_saved",
                 at,
-                {"turn": turn, "tool_calls": len(invocations)},
+                {
+                    "turn": turn,
+                    "tool_calls": len(invocations),
+                    "request_id": request_id,
+                    "response_id": response.response_id,
+                    "elapsed_ms": elapsed_ms,
+                    "usage": {
+                        key: value
+                        for key, value in response.usage.items()
+                        if key in {"prompt_tokens", "completion_tokens", "total_tokens"}
+                        and type(value) is int
+                        and value >= 0
+                    },
+                },
             )
             expected = "tool_calls" if invocations else "stop"
             if response.finish_reason != expected:
