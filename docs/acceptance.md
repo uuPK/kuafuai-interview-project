@@ -463,6 +463,14 @@ Docker 官方问题库有[同类启动错误报告](https://github.com/docker/de
 
 新增 compose.https.yaml 与 config/Caddyfile.example；API 仍仅发布回环端口，只信任运维明确指定的代理 IP。官方 caddy:2 镜像在禁网容器内校验示例为 Valid configuration，日志 caddy-step-5.2.log。docs/deployment.md 给出 Linux 权限、DNS/证书/Secure Cookie、健康排查、停写备份、新卷恢复、原生迁入、升级回滚及恢复后暂缓邮件核对的具体操作。实际公网 HTTPS、证书续期和服务器防火墙没有部署环境，保持待验收。用户已提供 QQ SMTP 配置并写入本地忽略的 .env，必填校验通过；真实连接与接收结果在 5.4 执行后记录。
 
+## 步骤 5.3：核心回归与演示
+
+2026-10-15 完整执行 scripts/verify.py --docker。pytest 1346 passed、19 skipped，291.67 秒，分支计入的总体覆盖率 95.81%；Node 前端 15 passed。跳过项为旧记录重放 4、真实模型 13、Windows 符号链接权限 2；本轮六项真实 Bash/恢复与一项真实 Compose（含备份恢复）均已执行，不在跳过项里。Ruff 全部通过。结果保存于 data/acceptance/final-regression/tests.xml、coverage.json 与 verify-step-5.3.log。
+
+新增 scripts/verify.py 统一入口，按序运行静态检查、完整 pytest/覆盖率与前端测试；显式 --docker 才启动本地容器，付费供应商开关与旧记录重放始终关闭。tests/test_verification.py 检查环境中误开真实服务时仍会被隔离；test_phase_two.py 只导出允许字段的固定研究轨迹，未导出原始模型协议。docs/core-acceptance.md 对应计划八项验收，提供执行命令、反馈补查/修订/恢复三条轨迹和真实验收边界。
+
+本轮导出的补查样例为虚构开源模型/芯片新闻：前者经历空 RSS、抓取 403、换来源、定位换词和读取正文，使用 9 次模型/2 次发现/2 次抓取/12 次工具调用；后者 8/2/1/11，选题与理由不同。其提交为研究测试替身。正式质量轨迹 revision-number 中，数字错误被拒绝、重读条件后修订，第二次响应保存后重启，简报/历史/队列各一；独立核对两次。committed-queue-process-exit 的真实子进程退出码 37，提交后重开仍各一条，没有新增模型请求。数据报告保存在忽略目录，真实模型/真实新闻/邮箱及人工审阅在 5.4 分别记录。
+
 ## 真实服务联通
 
 | 验收项 | 当前状态 | 完成条件 |

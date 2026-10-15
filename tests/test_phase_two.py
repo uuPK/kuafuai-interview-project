@@ -1,5 +1,7 @@
 import asyncio
 import json
+import os
+from pathlib import Path
 
 import pytest
 
@@ -256,6 +258,33 @@ def test_phase_two_preference_history_feedback_location_and_reason_trace(
             assert "attacker@example.com" not in selected["summary"] + selected["selection_reason"]
             assert "999%" not in selected["summary"]
             assert env.runs.get_run(env.run.id, "user-1").subscription.email == "reader@example.com"
+            if os.environ.get("NEWS_DEMO_RECORD") == "1":
+                # Export an allowlisted fictional trace; never copy raw model protocol.
+                payload = {
+                    "fixture_news": True,
+                    "fixture_models": True,
+                    "scope": "feedback_and_preference_only; submission is a test stub",
+                    "topic": topic,
+                    "status": done.status,
+                    "budget_usage": done.budget_usage.model_dump(),
+                    "calls": [
+                        {
+                            "tool": call.name,
+                            "ok": call.result.ok,
+                            "error": call.result.error.code if call.result.error else None,
+                        }
+                        for message in conversations.messages(done.id, done.user_id)
+                        for proposed in getattr(message, "tool_calls", ())
+                        for call in [env.calls.get_call(done.id, done.user_id, proposed.id)]
+                    ],
+                    "selected_title": selected["title"],
+                    "selection_reason": selected["selection_reason"],
+                }
+                target = Path("data/acceptance/demos")
+                target.mkdir(parents=True, exist_ok=True)
+                (target / ("feedback-model.json" if blocked else "feedback-chip.json")).write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
 
     asyncio.run(run())
 
