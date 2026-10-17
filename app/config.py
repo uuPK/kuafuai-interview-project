@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     retry_inline_max_seconds: float = Field(default=5, ge=0, le=30, allow_inf_nan=False)
     max_redirects: int = Field(default=5, ge=0, le=10)
     max_download_bytes: int = Field(default=2_000_000, ge=1)
+    public_dns: Literal["system", "google_doh"] = "system"
 
     max_model_requests: int = Field(default=15, ge=2)
     max_search_calls: int = Field(default=8, ge=1)
@@ -91,6 +92,7 @@ class Settings(BaseSettings):
     bash_timeout_seconds: float = Field(default=10, gt=0, le=30, allow_inf_nan=False)
     bash_output_bytes: int = Field(default=24_000, ge=256, le=1_000_000)
     rss_sources_file: Path | None = Field(default=None, repr=False, exclude=True)
+    rss_enabled: bool = False
     max_rss_entries: int = Field(default=500, ge=1, le=2000)
 
     @field_validator("data_dir")

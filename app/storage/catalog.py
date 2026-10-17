@@ -23,6 +23,19 @@ RUN_FIELDS = (
     "budget_usage",
 )
 
+SOURCE_ERRORS = {
+    "PUBLIC_ADDRESS_BLOCKED",
+    "PUBLIC_PEER_MISMATCH",
+    "PUBLIC_DNS_INVALID",
+    "PUBLIC_DNS_TIMEOUT",
+    "PUBLIC_DNS_UNAVAILABLE",
+    "FETCH_NETWORK",
+    "FETCH_TIMEOUT",
+    "FETCH_FORBIDDEN",
+    "FETCH_HTTP_STATUS",
+    "FETCH_TOO_LARGE",
+}
+
 
 class CatalogStore:
     def __init__(self, research, briefs, settings):
@@ -74,16 +87,38 @@ class CatalogStore:
         with self.database.connection() as connection:
             row = self.runs._owned_row(connection, run_id, owner)
             brief = connection.execute("SELECT id FROM briefs WHERE run_id=?", (run_id,)).fetchone()
+            source_error = self._source_error(connection, row)
         value = self._run(row)
         run = _record(row)
         value["subscription"] = self.runs.projection.redactor.clean(
             run.subscription.model_dump(mode="json")
         )
         value["brief_id"] = brief["id"] if brief else None
+        value["source_error_code"] = source_error
         value["progress"] = self.runs.projection.data(
             self.research.progress(run_id, owner).model_dump()
         )
         return value
+
+    @staticmethod
+    def _source_error(connection, run):
+        """Explain evidence acquisition failure using saved results, never model prose."""
+        if run["status"] != "failed":
+            return None
+        rows = connection.execute(
+            "SELECT json_extract(result_json,'$.ok') AS ok, "
+            "json_extract(result_json,'$.error.code') AS code FROM tool_calls "
+            "WHERE run_id=? AND name IN ('fetch_url','read_feed') "
+            "AND json_valid(result_json) ORDER BY rowid DESC LIMIT 100",
+            (run["id"],),
+        ).fetchall()
+        if connection.execute(
+            "SELECT 1 FROM sources WHERE run_id=? LIMIT 1", (run["id"],)
+        ).fetchone():
+            return None
+        return next(
+            (row["code"] for row in rows if not row["ok"] and row["code"] in SOURCE_ERRORS), None
+        )
 
     def brief(self, brief_id, owner):
         value = self.briefs.get(brief_id, owner)

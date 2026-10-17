@@ -3,7 +3,7 @@
 from pydantic import Field
 
 from app.agent.research import ResearchProgress
-from app.tools.models import ToolFailure, ToolParameters, ToolResult
+from app.tools.models import ArgumentIssue, ToolFailure, ToolParameters, ToolResult
 from app.tools.registry import ToolDefinition
 
 
@@ -24,7 +24,14 @@ class ResearchTools:
         if any(
             topic.casefold() not in topics for topic in (*parameters.collected, *parameters.missing)
         ):
-            raise ToolFailure("PROGRESS_TOPIC_UNKNOWN", "进度话题必须来自本任务的订阅话题。")
+            return ToolResult.failure(
+                "PROGRESS_TOPIC_UNKNOWN",
+                "collected/missing只能填写订阅原话题，事件说明放issues。",
+                details=tuple(
+                    ArgumentIssue(field="collected/missing", issue=f"允许话题：{topic}"[:80])
+                    for topic in run.subscription.topics[:10]
+                ),
+            )
         progress = ResearchProgress(
             collected=tuple(topics[topic.casefold()] for topic in parameters.collected),
             missing=tuple(topics[topic.casefold()] for topic in parameters.missing),

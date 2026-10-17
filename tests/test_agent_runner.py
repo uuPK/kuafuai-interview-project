@@ -423,6 +423,22 @@ def test_input_limit_stops_without_truncating_history_or_calling_model(agent_env
     assert len(agent_env.conversations.messages(agent_env.run.id, "user-1")) == 2
 
 
+def test_runner_warns_about_input_capacity_before_submission(agent_env, response_factory):
+    env = agent_env
+    request = ModelRequest(
+        messages=env.conversations.messages(env.run.id, "user-1"),
+        tools=tuple(env.registry.schemas()),
+    )
+    settings = env.settings.model_copy(
+        update={"max_model_input_chars": len(request.model_dump_json()) + 1000}
+    )
+    model = ScriptedModel([submit(response_factory)])
+    assert run(env, model, settings=settings).status == "completed"
+    assert any(
+        "保留一次修订" in (getattr(m, "content", None) or "") for m in model.requests[0].messages
+    )
+
+
 def test_model_request_budget_is_checked_before_request(agent_env, response_factory):
     env = agent_env
     env.runs.consume_budget(env.run.id, "user-1", BudgetCharge(model_requests=15))

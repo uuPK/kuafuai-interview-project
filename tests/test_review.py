@@ -12,6 +12,7 @@ from app.agent.protocol import AssistantMessage, ModelFailure, ModelRequest, Mod
 from app.agent.review import ReviewInputProblem, parse_review
 from app.agent.runner import AgentRunner
 from app.agent.stubs import ScriptedModel
+from app.providers.article import Publication
 from app.storage.conversations import ConversationStore
 from app.storage.models import BudgetCharge
 from app.tools.context import bind_context
@@ -104,6 +105,38 @@ def test_server_context_keeps_units_conditions_and_owned_history(tool_env):
             assert len(model.requests) == 1
 
     asyncio.run(run())
+
+
+def test_review_receives_candidate_time_status_even_for_unselected_material(tool_env):
+    async def scenario():
+        env = tool_env
+        async with review_world(env, ReviewModel()) as world:
+            selected = await draft_item(world)
+            other = await draft_item(world, "m1")
+            source_id = other["citations"][0]["source_id"]
+            meta, _ = world.sources.get_source(env.run.id, env.run.user_id, source_id)
+            updated = meta.model_copy(
+                update={
+                    "publication": Publication(status="missing", issues=("原文缺少明确发布时间",))
+                }
+            )
+            with env.database.transaction() as connection:
+                connection.execute(
+                    "UPDATE sources SET metadata_json=? WHERE id=?",
+                    (updated.model_dump_json(), source_id),
+                )
+            context, proposed, verified = checked(world, draft(selected))
+            request = world.reviewer.input.build(context, proposed, verified)
+            packet = json.loads(request.messages[1].content)
+            materials = {m["source_id"]: m for m in packet["research_observations"]["materials"]}
+            record = materials[source_id]
+            assert record["candidate_id"] == meta.candidate_id and record["url"] == meta.url
+            assert record["publication_status"] == "missing" and record["published_at"] is None
+            assert record["usable_in_window"] is False and "原文缺少" in record["issues"][0]
+            assert materials[selected["citations"][0]["source_id"]]["usable_in_window"] is True
+            assert "不能仅因搜索还有其他候选" in request.messages[0].content
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize(
@@ -260,6 +293,41 @@ def test_two_failed_submissions_stop_and_batch_ids_still_pair(brief_env, respons
     assert env.calls.get_call(env.run.id, "user-1", "s3").result.error.code == "RUN_FINISHED"
     ModelRequest(messages=conversations.messages(env.run.id, "user-1"), tools=())
     assert counts(ready) == (0, 0, 0)
+
+
+def test_first_submission_reserves_full_revision_and_second_review(tool_env, response_factory):
+    async def scenario():
+        env = tool_env
+        reviews = ReviewModel(reject(), {"approved": True, "issues": []})
+        async with review_world(env, reviews) as world:
+            correct = draft(await draft_item(world))
+            incorrect = deepcopy(correct)
+            incorrect["items"][0]["summary"] = "Atlas v2 性能提高99%。"
+            env.runs.consume_budget(env.run.id, env.run.user_id, BudgetCharge(model_requests=10))
+            decisions = ScriptedModel(
+                [
+                    response_factory(("extra", "web_search", {"query": "extra discovery"})),
+                    response_factory(("first", "submit_brief", {"draft": incorrect})),
+                    response_factory(("revised", "submit_brief", {"draft": correct})),
+                ]
+            )
+            conversations = ConversationStore(env.calls)
+            done = await AgentRunner(decisions, world.executor, conversations, env.settings).run(
+                env.run.id, env.run.user_id
+            )
+            assert done.status == "completed" and done.budget_usage.model_requests == 15
+            assert (
+                env.calls.get_call(env.run.id, env.run.user_id, "extra").result.error.code
+                == "SUBMISSION_REQUIRED"
+            )
+            assert len(reviews.requests) == 2 and len(decisions.requests) == 3
+            assert any(
+                "一次修订决策" in (getattr(m, "content", None) or "")
+                for m in decisions.requests[0].messages
+            )
+            ModelRequest(messages=conversations.messages(env.run.id, env.run.user_id), tools=())
+
+    asyncio.run(scenario())
 
 
 def test_schema_failure_counts_and_duplicate_id_does_not(brief_env):

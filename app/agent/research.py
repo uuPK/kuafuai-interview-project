@@ -14,9 +14,17 @@ Fact = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max
 
 
 class ResearchProgress(ToolParameters):
-    collected: tuple[Topic, ...] = Field(max_length=20)
-    missing: tuple[Topic, ...] = Field(max_length=20)
-    issues: tuple[ShortText, ...] = Field(max_length=10)
+    collected: tuple[Topic, ...] = Field(
+        max_length=20,
+        description="已有正文材料的订阅原话题；填topics中的原值，不填新闻标题、事件或进度句子。",
+    )
+    missing: tuple[Topic, ...] = Field(
+        max_length=20,
+        description="仍待补充的订阅原话题；填topics中的原值，不填新闻标题、事件或进度句子。",
+    )
+    issues: tuple[ShortText, ...] = Field(
+        max_length=10, description="材料不足、时间不明等具体问题；新闻或事件的说明放在这里。"
+    )
 
     @field_validator("collected", "missing", "issues")
     @classmethod

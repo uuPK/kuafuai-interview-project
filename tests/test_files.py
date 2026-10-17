@@ -311,6 +311,17 @@ def test_source_snapshot_reads_and_tamper_detection(material_env):
         path = result.data["file_path"]
         read = await env.invoke("read_file", path=path)
         assert read.ok and read.data["source_id"] == result.data["source_id"]
+        keyword = read.data["content"][10:40]
+        located = await env.invoke("search_content", keyword=keyword, dir=path.rsplit("/", 1)[0])
+        hit = located.data["items"][0]
+        assert hit["source_id"] == read.data["source_id"]
+        assert (
+            hit["quote"] == keyword == read.data["content"][hit["start_offset"] : hit["end_offset"]]
+        )
+        assert (
+            hit["excerpt"]
+            == read.data["content"][hit["excerpt_start_offset"] : hit["excerpt_end_offset"]]
+        )
         index = await env.invoke("read_file", path=path.replace("body.txt", "index.json"))
         assert index.ok and index.data["source_id"] is None
         hits = await env.invoke("search_content", keyword="start_offset", dir="sources")

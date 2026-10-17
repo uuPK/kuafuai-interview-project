@@ -333,7 +333,9 @@ def test_catalog_is_loaded_once_only_enabled_names_are_exposed(tmp_path):
         ),
         encoding="utf-8",
     )
-    config = Settings(_env_file=None, data_dir=tmp_path / "data", rss_sources_file=path)
+    config = Settings(
+        _env_file=None, data_dir=tmp_path / "data", rss_sources_file=path, rss_enabled=True
+    )
     catalog = FeedCatalog.load(config)
     assert catalog.public() == ({"feed_id": "official", "name": "官方 AI"},)
     assert catalog.get("disabled") is None
@@ -355,10 +357,33 @@ def test_invalid_configured_catalog_prevents_startup(tmp_path, mode):
     with (
         pytest.raises(ValueError, match="RSS source catalog"),
         TestClient(
-            create_app(Settings(_env_file=None, data_dir=tmp_path / "data", rss_sources_file=path))
+            create_app(
+                Settings(
+                    _env_file=None,
+                    data_dir=tmp_path / "data",
+                    rss_sources_file=path,
+                    rss_enabled=True,
+                )
+            )
         ),
     ):
         pass
+
+
+@pytest.mark.parametrize("configured", [False, True])
+def test_disabled_rss_does_not_load_catalog_or_expose_tool(tmp_path, configured):
+    path = tmp_path / "broken.json"
+    path.write_text("not a feed catalog", encoding="utf-8")
+    config = Settings(
+        _env_file=None, data_dir=tmp_path / "data", rss_sources_file=path if configured else None
+    )
+    assert config.rss_enabled is False
+    with TestClient(create_app(config)) as client:
+        assert client.get("/health").status_code == 200
+        registry = client.app.state.tool_registry
+        assert registry.get("web_search") and registry.get("fetch_url")
+        assert registry.get("read_feed") is None and registry.available_feeds == ()
+        assert not client.app.state.feed_catalog.feeds
 
 
 @pytest.mark.parametrize(

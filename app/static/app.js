@@ -63,6 +63,43 @@ export function localTime(value) {
 export function messageFor(code) {
   return errors[code] || "操作未完成，请稍后重试。";
 }
+export function runFailureText(run) {
+  const sources = {
+    PUBLIC_ADDRESS_BLOCKED:
+      "正文来源被解析为非公网地址。请维护者检查代理和 DNS 配置，再重新生成预览。",
+    PUBLIC_PEER_MISMATCH:
+      "正文来源的实际连接地址与解析地址不一致，请维护者检查网络。",
+    PUBLIC_DNS_INVALID: "正文来源的公网域名解析无效，请维护者检查 DNS 配置。",
+    PUBLIC_DNS_TIMEOUT: "正文来源的公网域名解析超时，请检查网络后重新生成。",
+    PUBLIC_DNS_UNAVAILABLE: "公网域名解析服务暂不可用，请检查网络后重新生成。",
+    FETCH_NETWORK: "正文来源连接失败，请检查网络后重新生成。",
+    FETCH_TIMEOUT: "正文来源请求超时，可稍后重新生成。",
+    FETCH_FORBIDDEN:
+      "正文来源拒绝访问，本次未能取得证据，可重新生成以尝试其他来源。",
+    FETCH_HTTP_STATUS:
+      "正文来源返回异常状态，本次未能取得证据，可稍后重新生成。",
+    FETCH_TOO_LARGE: "正文来源超过下载大小限制，本次未能取得证据。",
+  };
+  const reasons = {
+    brief_revision_exhausted:
+      "稿件两次提交检查均未通过，请查看下方检查反馈后重新生成。",
+    brief_review_service_failed: "稿件核对服务暂不可用，请稍后重新生成。",
+    model_dependency_configuration: "模型服务配置不完整，请维护者检查配置。",
+    model_dependency_authentication: "模型服务认证失败，请维护者检查凭据。",
+    budget_deadline: "本次研究已超时，可重新生成。",
+    budget_model_requests: "本次模型调用预算已用完，可重新生成。",
+    tool_budget_exceeded: "本次工具调用预算已用完，可重新生成。",
+    missing_submission: "模型未提交合格稿件，可重新生成。",
+    model_input_too_large:
+      "本次研究材料超过输入容量上限，未能继续修订；可重新生成或缩小订阅范围。",
+  };
+  if (!run.stop_reason) return "";
+  return (
+    sources[run.source_error_code] ||
+    reasons[run.stop_reason] ||
+    "本次研究未完成，请查看下方行动与反馈，或联系维护者。"
+  );
+}
 export function mailText(mail) {
   const reasons = {
     SMTP_RESULT_UNKNOWN:
@@ -405,7 +442,7 @@ async function poll(view) {
     $("run-window").textContent =
       `新闻窗口：${localTime(run.window_start)} — ${localTime(run.window_end)}`;
     $("run-reason").textContent = run.stop_reason
-      ? `停止原因：${run.stop_reason}`
+      ? `停止原因：${runFailureText(run)}`
       : run.retry_at
         ? `下次尝试：${localTime(run.retry_at)}`
         : run.status === "queued"

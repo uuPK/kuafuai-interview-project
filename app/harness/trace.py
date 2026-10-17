@@ -24,6 +24,7 @@ FIELDS = set(
     "match_count entry_count history_count parameters_omitted result_summary days".split()
 )
 LABELS = {
+    "budget_warning": "研究预算接近上限，提示模型预留提交与修订空间",
     "run_created": "任务已创建",
     "state_changed": "任务状态变化",
     "model_response_saved": "模型响应已保存",

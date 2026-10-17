@@ -122,10 +122,23 @@ class AgentRunner:
             self._fail(run_id, user_id, "budget_model_requests")
             return None
         if saved is None:
-            self.conversations.flush_notices(run_id, user_id, self.settings.request_timeout_seconds)
+            self.conversations.flush_notices(
+                run_id, user_id, self.settings.request_timeout_seconds, review_reserve=reserve
+            )
             request = ModelRequest(
                 messages=self.conversations.messages(run_id, user_id),
                 tools=tuple(self.executor.registry.schemas()),
+            )
+            self.conversations.flush_notices(
+                run_id,
+                user_id,
+                self.settings.request_timeout_seconds,
+                input_chars=len(request.model_dump_json()),
+                max_input_chars=self.settings.max_model_input_chars,
+                review_reserve=reserve,
+            )
+            request = request.model_copy(
+                update={"messages": self.conversations.messages(run_id, user_id)}
             )
         else:
             request = ModelRequest.model_validate_json(saved.payload_json)

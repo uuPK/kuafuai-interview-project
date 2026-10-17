@@ -2,6 +2,7 @@
 
 import asyncio
 import ipaddress
+import json
 import socket
 import ssl
 from dataclasses import dataclass
@@ -12,7 +13,7 @@ import httpx
 
 from app.config import Settings
 from app.harness.redaction import Redactor
-from app.tools.discovery import candidate_url
+from app.tools.discovery import candidate_url, domain_name
 from app.tools.models import ToolFailure
 
 
@@ -46,6 +47,106 @@ async def resolve_addresses(host, port):
             raise
     records = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
     return list(dict.fromkeys(record[4][0] for record in records))
+
+
+class HTTPSResolver:
+    """Deployment-selected DNS only; returned IPs still pass the public/peer guards."""
+
+    def __init__(self, timeout, *, transport=None):
+        self.timeout, self.transport = timeout, transport
+
+    async def __call__(self, host, port):
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            try:
+                host = domain_name(host)
+            except (ValueError, UnicodeError):
+                raise ToolFailure("PUBLIC_DNS_INVALID", "目标域名不符合公网解析要求。") from None
+        else:
+            return [str(public_address(host))]
+        try:
+            async with asyncio.timeout(self.timeout):
+                async with httpx.AsyncClient(
+                    trust_env=False,
+                    follow_redirects=False,
+                    timeout=self.timeout,
+                    transport=self.transport,
+                ) as client:
+                    groups = await asyncio.gather(
+                        self._query(client, host, 1),
+                        self._query(client, host, 28),
+                        return_exceptions=True,
+                    )
+                    for group in groups:
+                        if isinstance(group, BaseException):
+                            raise group
+        except (TimeoutError, httpx.TimeoutException):
+            raise ToolFailure(
+                "PUBLIC_DNS_TIMEOUT", "公网域名解析超时，请检查网络后重试。", retryable=True
+            ) from None
+        except httpx.TransportError:
+            raise ToolFailure(
+                "PUBLIC_DNS_UNAVAILABLE", "公网域名解析服务暂不可用。", retryable=True
+            ) from None
+        addresses = list(dict.fromkeys(value for group in groups for value in group))
+        if not addresses or len(addresses) > 16:
+            raise ToolFailure("PUBLIC_DNS_INVALID", "目标未提供有效且有界的公网解析结果。")
+        return [str(public_address(value)) for value in addresses]
+
+    async def _query(self, client, host, kind):
+        # Fixed trusted endpoint, no credentials/cookies, no redirect or OS proxy.
+        request = httpx.Request(
+            "GET",
+            "https://dns.google/resolve",
+            params={"name": host, "type": kind, "edns_client_subnet": "0.0.0.0/0"},
+            headers={"Accept": "application/dns-json", "Accept-Encoding": "identity"},
+            extensions={
+                "timeout": dict.fromkeys(("connect", "read", "write", "pool"), self.timeout)
+            },
+        )
+        response = await client.send(request, stream=True)
+        try:
+            if response.status_code != 200:
+                raise ToolFailure(
+                    "PUBLIC_DNS_UNAVAILABLE", "公网域名解析服务暂不可用。", retryable=True
+                )
+            content_type = response.headers.get("content-type", "").split(";")[0].strip()
+            if content_type not in {"application/json", "application/dns-json"} or (
+                response.headers.get("content-encoding", "identity").lower() != "identity"
+            ):
+                raise ValueError
+            body = bytearray()
+            async for chunk in response.aiter_bytes():
+                if len(body) + len(chunk) > 65_536:
+                    raise ValueError
+                body.extend(chunk)
+            data = json.loads(body)
+            if (
+                not isinstance(data, dict)
+                or type(data.get("Status")) is not int
+                or data["Status"] not in {0, 3}
+                or data.get("TC") is not False
+                or data.get("Question") != [{"name": host + ".", "type": kind}]
+            ):
+                raise ValueError
+            records = data.get("Answer", [])
+            if not isinstance(records, list) or len(records) > 64:
+                raise ValueError
+            values = []
+            for record in records:
+                if not isinstance(record, dict) or type(record.get("type")) is not int:
+                    raise ValueError
+                if record["type"] in {1, 28}:
+                    value = record.get("data")
+                    if ipaddress.ip_address(value).version != (4 if record["type"] == 1 else 6):
+                        raise ValueError
+                    values.append(str(public_address(value)))
+            return values
+        except (ValueError, TypeError, KeyError):
+            raise ToolFailure("PUBLIC_DNS_INVALID", "公网域名解析响应无效，未连接目标。") from None
+        finally:
+            await response.aclose()
 
 
 class CheckedStream(httpcore.AsyncNetworkStream):
@@ -189,7 +290,14 @@ class PublicHttpClient:
     def __init__(self, settings: Settings, *, transport=None):
         self.settings, self.redactor = settings, Redactor(settings)
         self.http = httpx.AsyncClient(
-            transport=transport or PublicTransport(),
+            transport=transport
+            or PublicTransport(
+                backend=PublicBackend(
+                    resolver=HTTPSResolver(settings.request_timeout_seconds)
+                    if settings.public_dns == "google_doh"
+                    else resolve_addresses
+                )
+            ),
             timeout=settings.request_timeout_seconds,
             follow_redirects=False,
             trust_env=False,

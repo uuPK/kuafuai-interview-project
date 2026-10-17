@@ -94,6 +94,10 @@ def test_fetch_persists_utf8_snapshot_index_metadata_and_replays(tool_env):
         body = setup.store.files.verify(context(env), meta, index)
         assert meta.char_count == len(body) and meta.content_hash == digest(body.encode("utf-8"))
         assert "\r" not in body and result.data["preview"] == body[:800]
+        assert (
+            body[result.data["preview_start_offset"] : result.data["preview_end_offset"]]
+            == result.data["preview"]
+        )
         assert meta.publication.status == "confirmed" and meta.fetched_at
         assert meta.index_hash == digest(index.model_dump_json().encode("utf-8"))
         assert await setup.executor.execute(env.run.id, "user-1", call) == result
@@ -241,6 +245,7 @@ def test_navigation_output_limit_keeps_complete_index(tool_env):
         assert result.ok and len(result.model_dump_json()) <= 1700
         meta, index = setup.store.get_source(env.run.id, "user-1", result.data["source_id"])
         assert result.data["omitted_sections"] > 0
+        assert result.data["preview_end_offset"] == len(result.data["preview"])
         assert len(index.sections) == len(result.data["sections"]) + result.data["omitted_sections"]
         assert meta.char_count > 800
 

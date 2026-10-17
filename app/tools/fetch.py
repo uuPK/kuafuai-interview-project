@@ -75,6 +75,8 @@ class FetchTool:
             "char_count": metadata.char_count,
             "content_hash": content_hash,
             "preview": article.body[:800],
+            "preview_start_offset": 0,
+            "preview_end_offset": min(800, len(article.body)),
             "sections": sections,
             "omitted_sections": 0,
             "publication_status": article.publication.status,
@@ -107,6 +109,7 @@ class FetchTool:
             len(result.model_dump_json()) > self.settings.max_tool_result_chars and data["preview"]
         ):
             data["preview"] = data["preview"][: len(data["preview"]) // 2]
+            data["preview_end_offset"] = len(data["preview"])
             result = ToolResult.success(data)
         if len(result.model_dump_json()) > self.settings.max_tool_result_chars:
             raise ToolFailure("RESULT_TOO_LARGE", "来源导航超过结果边界，请检查工具结果大小配置。")

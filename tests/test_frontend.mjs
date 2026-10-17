@@ -5,7 +5,14 @@ const code = await readFile(
   new URL("../app/static/app.js", import.meta.url),
   "utf8",
 );
-const { safeURL, splitValues, localTime, messageFor, mailText } = await import(
+const {
+  safeURL,
+  splitValues,
+  localTime,
+  messageFor,
+  mailText,
+  runFailureText,
+} = await import(
   "data:text/javascript;base64," + Buffer.from(code).toString("base64")
 );
 test("external source links reject executable and credential URLs", () => {
@@ -37,6 +44,30 @@ test("dates consistently use Beijing and invalid dates are explicit", () => {
 });
 test("unknown server codes never become raw UI text", () => {
   assert.equal(messageFor("raw secret <script>"), "操作未完成，请稍后重试。");
+});
+
+test("task failures explain saved source failures before submission exhaustion", () => {
+  assert.match(
+    runFailureText({
+      stop_reason: "brief_revision_exhausted",
+      source_error_code: "PUBLIC_ADDRESS_BLOCKED",
+    }),
+    /非公网地址/,
+  );
+  assert.match(
+    runFailureText({ stop_reason: "brief_revision_exhausted" }),
+    /两次提交检查/,
+  );
+  assert.equal(runFailureText({ stop_reason: null }), "");
+  const safe = runFailureText({
+    stop_reason: "secret<script>",
+    source_error_code: "private-key",
+  });
+  assert.doesNotMatch(safe, /secret|script|private-key/);
+  assert.match(
+    runFailureText({ stop_reason: "model_dependency_configuration" }),
+    /配置不完整/,
+  );
 });
 test("mail distinguishes accepted, unknown, retries and safe error messages", () => {
   assert.match(mailText({ status: "sent", attempts: 1 }), /不代表最终送达/);

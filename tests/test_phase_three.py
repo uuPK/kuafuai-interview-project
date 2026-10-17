@@ -240,8 +240,6 @@ def test_failed_research_stops_with_paired_feedback_and_no_delivery(
 ):
     async def run():
         overrides = {"external_max_attempts": 1}
-        if case == "model_budget":
-            overrides["max_model_requests"] = 2
         env = environment(tmp_path, "stop-" + case, **overrides)
         if case == "authentication":
             reviews = ReviewModel(ModelFailure("UNAUTHORIZED", category="authentication"))
@@ -251,6 +249,14 @@ def test_failed_research_stops_with_paired_feedback_and_no_delivery(
             reviews = ReviewModel(reject(), reject())
         async with review_world(env, reviews) as world:
             value = draft(await draft_item(world))
+            if case == "model_budget":
+                # Prepare fixed evidence before tightening the budget for the recovery scenario.
+                with env.database.transaction() as connection:
+                    connection.execute(
+                        "UPDATE runs SET budget_limits_json=json_set("
+                        "budget_limits_json, '$.model_requests', 2) WHERE id=?",
+                        (env.run.id,),
+                    )
             seed(env, response_factory(("first", "submit_brief", {"draft": value})))
             original = state(env)
             if case == "deadline":

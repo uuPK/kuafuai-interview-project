@@ -294,6 +294,7 @@ class FileTools:
                             "content_hash": material.content_hash,
                             "start_offset": start,
                             "end_offset": end,
+                            "quote": material.text[start:end],
                             "excerpt": material.text[
                                 max(0, start - 80) : min(len(material.text), end + 80)
                             ],
@@ -318,7 +319,8 @@ class FileTools:
                     "next_cursor": token if count < len(hits) else None,
                     "offset_unit": "unicode_characters",
                     "literal_match": True,
-                    "guidance": "命中片段用于定位；核实数字和条件请用 read_file 读取相邻正文。"
+                    "guidance": "quote配start_offset/end_offset；完整excerpt配excerpt_start_offset/"
+                    "excerpt_end_offset，不能混用。核实数字和条件请用read_file读相邻正文。"
                     if hits
                     else "该字面关键词未命中，请结合语言换词、查看章节或扩大读取范围。",
                 }

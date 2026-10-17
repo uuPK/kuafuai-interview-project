@@ -41,6 +41,7 @@ def configured(component):
     return Settings(
         data_dir=root,
         rss_sources_file=Path("config/rss-sources.json"),
+        rss_enabled=component == "providers-rss",
         request_timeout_seconds=45,
         external_max_attempts=2,
         deepseek_thinking_enabled=False,

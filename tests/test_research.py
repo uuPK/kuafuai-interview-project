@@ -164,6 +164,7 @@ def test_progress_atomic_replacement_permissions_and_reopen(tool_env):
             invocation(call_id="unknown", collected=[], missing=["AI芯片"], issues=[]),
         )
         assert unknown.error.code == "PROGRESS_TOPIC_UNKNOWN"
+        assert "允许话题：开源模型" in unknown.error.details[0].issue
         database = Database(env.database.path)
         database.initialize()
         persisted = ResearchStore(CallStore(RunStore(database, env.settings)), env.settings)

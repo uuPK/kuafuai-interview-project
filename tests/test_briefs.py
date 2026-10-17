@@ -217,6 +217,20 @@ def test_citation_schema_cannot_override_server_fields(brief_env, field, value):
     assert counts(ready) == (0, 0, 0)
 
 
+def test_unique_exact_quote_returns_repair_offsets_without_accepting_wrong_range(brief_env):
+    ready = brief_env
+    reference = ready.draft["items"][0]["citations"][0]
+    assert ready.body.count(reference["quote"]) == 1
+    reference["end_offset"] += 1
+    rejected = execute(ready, call_id="wrong-range")
+    assert rejected.error.code == "BRIEF_RULES_REJECTED" and not ready.reviews
+    assert "start_offset=0,end_offset=50" in rejected.error.details[0].issue
+    assert counts(ready) == (0, 0, 0)
+    reference["end_offset"] = 50
+    assert execute(ready, call_id="repaired-range").ok
+    assert counts(ready) == (1, 1, 1)
+
+
 @pytest.mark.parametrize(
     "change",
     ["count", "shortfall", "unknown", "duplicate_topic", "missing", "overlap", "duplicate_missing"],
@@ -507,6 +521,51 @@ def test_existing_candidate_without_body_and_failed_fetch_cannot_be_no_news(tool
             assert any("未成功调用" in i.issue for i in result.error.details)
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "failed_tool,search_ok,accepted",
+    [
+        ("read_feed", True, True),
+        ("read_feed", False, False),
+        ("web_search", True, False),
+        ("fetch_url", True, False),
+    ],
+)
+def test_optional_rss_failure_does_not_block_valid_empty_search(
+    tool_env, failed_tool, search_ok, accepted
+):
+    async def scenario():
+        env = tool_env
+        async with ResearchWorld(env, zero_first=True) as world:
+            if search_ok:
+                found = await world.executor.execute(
+                    env.run.id,
+                    "user-1",
+                    ToolInvocation(
+                        tool_call_id="valid-search",
+                        name="web_search",
+                        arguments='{"query":"empty"}',
+                    ),
+                )
+                assert found.ok and found.data["items"] == []
+            failed = ToolInvocation(
+                tool_call_id="optional-failure", name=failed_tool, arguments="{}"
+            )
+            env.calls.prepare_calls(env.run.id, "user-1", [failed])
+            world.executor.finish(
+                env.run.id,
+                "user-1",
+                failed,
+                ToolResult.failure("FETCH_NETWORK", "fixture dependency unavailable"),
+            )
+            _, rejection = BriefRules(world.sources, env.settings).check(
+                bind_context(env.runs, env.settings.data_dir, env.run.id, "user-1"),
+                BriefDraft.model_validate_json(json.dumps(empty_draft())),
+            )
+            assert (rejection is None) == accepted
+
+    asyncio.run(scenario())
 
 
 def test_agent_corrects_rejected_range_and_pairs_remaining_calls(brief_env, response_factory):

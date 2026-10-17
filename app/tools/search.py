@@ -72,12 +72,12 @@ class SearchTool:
                     "candidate_id": candidate.candidate_id,
                     "title": material.title[:300],
                     "url": material.url,
-                    "summary": summary[:800],
+                    "summary": summary[:300],
                     "language": material.language,
                     "date_clues": material.date_clues,
                     "discovery_method": material.discovery_method,
                     "feed_id": material.feed_id,
-                    "text_truncated": len(summary) > 800 or len(material.title) > 300,
+                    "text_truncated": len(summary) > 300 or len(material.title) > 300,
                 }
             )
         data = {

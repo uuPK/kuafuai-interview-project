@@ -26,6 +26,37 @@ def test_initialization_is_idempotent_and_validates_roles(agent_env) -> None:
         )
 
 
+def test_input_budget_warning_is_durable_idempotent_and_preserves_protocol(
+    agent_env, response_factory
+):
+    env = agent_env
+    before = env.conversations.messages(env.run.id, "user-1")
+    response = response_factory(("waiting", "web_search", {"query": "AI"}))
+    env.conversations.save_response(env.run.id, "user-1", response)
+    env.conversations.flush_notices(env.run.id, "user-1", 30, input_chars=800, max_input_chars=1000)
+    assert env.conversations.messages(env.run.id, "user-1")[-1] == response.message
+    with pytest.raises(RunNotFoundError):
+        env.conversations.flush_notices(
+            env.run.id, "other", 30, input_chars=800, max_input_chars=1000
+        )
+    # Pair the saved call before appending server guidance.
+    asyncio.run(
+        env.executor.execute(env.run.id, "user-1", response.message.tool_calls[0].invocation())
+    )
+    env.conversations.pair_saved_result(env.run.id, "user-1", "waiting")
+    paired = env.conversations.messages(env.run.id, "user-1")
+    for _ in range(2):
+        env.conversations.flush_notices(
+            env.run.id, "user-1", 30, input_chars=800, max_input_chars=1000
+        )
+    final = env.conversations.messages(env.run.id, "user-1")
+    assert final[: len(paired)] == paired and final[: len(before)] == before
+    assert len(final) == len(paired) + 1 and "保留一次修订" in final[-1].content
+    reopened = ConversationStore(CallStore(RunStore(env.database, env.settings)))
+    reopened.flush_notices(env.run.id, "user-1", 30, input_chars=800, max_input_chars=1000)
+    assert reopened.messages(env.run.id, "user-1") == final
+
+
 def test_response_and_all_calls_are_saved_before_execution(agent_env, response_factory) -> None:
     env = agent_env
     response = response_factory(

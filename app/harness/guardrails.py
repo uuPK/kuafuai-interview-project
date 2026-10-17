@@ -102,6 +102,18 @@ class GuardrailStore:
             run = _record(self.runs._owned_row(connection, run_id, user_id))
             if run.status != "running":
                 return None
+            delivery_reserve = reserved_model_requests
+            if reserved_model_requests and not is_submission:
+                submitted = connection.execute(
+                    "SELECT 1 FROM tool_calls WHERE run_id=? AND name='submit_brief' "
+                    "AND status='completed' LIMIT 1",
+                    (run_id,),
+                ).fetchone()
+                # Before first submission: next decision + first review + revision + final review.
+                # After feedback: next decision + final review.
+                delivery_reserve = (
+                    reserved_model_requests + 1 if submitted else 2 * (reserved_model_requests + 1)
+                )
             if (
                 self.runs.now() >= run.deadline_at
                 or run.budget_usage.tool_calls >= run.budget_limits.tool_calls
@@ -110,10 +122,11 @@ class GuardrailStore:
             if not is_submission and (
                 run.budget_limits.tool_calls - run.budget_usage.tool_calls <= 1
                 or run.budget_limits.model_requests - run.budget_usage.model_requests
-                <= reserved_model_requests
+                <= delivery_reserve
             ):
                 return ToolResult.failure(
-                    "SUBMISSION_REQUIRED", "剩余预算已预留给提交，请调用提交工具。"
+                    "SUBMISSION_REQUIRED",
+                    "剩余预算已预留给提交、修订和独立核对，请据现有正文直接提交。",
                 )
             streak = self.streak(connection, run_id)
             if (

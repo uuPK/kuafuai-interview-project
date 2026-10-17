@@ -111,6 +111,18 @@ class BriefRules:
                         ),
                         min(len(citation.quote), len(actual)),
                     )
+                    exact_start = body.find(citation.quote)
+                    if exact_start >= 0 and body.find(citation.quote, exact_start + 1) < 0:
+                        issue(
+                            field + ".quote",
+                            (
+                                f"字符{citation.start_offset + mismatch}：完整quote唯一定位"
+                                f"start_offset={exact_start},"
+                                f"end_offset={exact_start + len(citation.quote)}；"
+                                "保留原quote"
+                            )[:80],
+                        )
+                        continue
                     expected_char = (
                         repr(citation.quote[mismatch]) if mismatch < len(citation.quote) else "结束"
                     )
@@ -207,7 +219,11 @@ class BriefRules:
             ) from None
         if not discovered:
             issue("draft.items", "空简报需要本任务已保存的有效搜索或RSS结果")
-        if any(not result.ok for _, result in results):
+        search_succeeded = any(name == "web_search" and result.ok for name, result in results)
+        if any(
+            not result.ok and not (name == "read_feed" and search_succeeded)
+            for name, result in results
+        ):
             issue("draft.items", "搜索或抓取存在未成功调用，不能将依赖/材料失败标记为暂无新闻")
         if candidates and not any(name == "fetch_url" and result.ok for name, result in results):
             issue("draft.items", "已有候选但未取得正文，不能确认暂无符合条件的新闻")

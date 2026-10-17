@@ -145,7 +145,7 @@ def test_size_limit_keeps_full_material_and_reports_omitted(tool_env):
             assert result.data["omitted_count"] == 5 - len(result.data["items"])
             assert result.data["omitted_count"] > 0
             candidate = result.data["items"][0]
-            assert candidate["text_truncated"] and len(candidate["summary"]) == 800
+            assert candidate["text_truncated"] and len(candidate["summary"]) == 300
             assert (
                 len(
                     store.get_candidate(

@@ -72,11 +72,12 @@ async def open_runtime(configured, *, database=None):
         registry = ToolRegistry()
         register_search(registry, bocha, candidates, configured)
         public_http = await stack.enter_async_context(PublicHttpClient(configured))
-        feed_catalog = FeedCatalog.load(configured)
+        feed_catalog = FeedCatalog.load(configured) if configured.rss_enabled else FeedCatalog()
         application.state.feed_catalog = feed_catalog
-        register_feed(
-            registry, FeedClient(public_http, configured), candidates, configured, feed_catalog
-        )
+        if configured.rss_enabled:
+            register_feed(
+                registry, FeedClient(public_http, configured), candidates, configured, feed_catalog
+            )
         sources = SourceStore(candidates, configured)
         application.state.public_http_client = public_http
         application.state.source_store = sources

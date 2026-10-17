@@ -34,6 +34,10 @@ field必须是草稿中存在的字段路径，例如draft.items[0].summary；is
 概括性标题可以不重复摘要中的数字或条件，只要没有错误或夸大的具体断言；通用简报标题允许。
 event_date、entities、product_version均为可选信息，未填不构成错误；发布时间不自动等于事件日期。
 按用户话题/关注词检查相关性、实际价值和选题理由；核对未覆盖话题与不足条数说明是否有依据。
+max_items是条数上限，不要求凑满；不能仅因搜索还有其他候选就以“遗漏新闻”拒绝稿件。
+发现结果只是线索，date_clues与摘要不能确认发布时间或事实；日期以materials中的服务端publication_status、published_at、usable_in_window为准。
+usable_in_window=false的候选不能要求入稿；不能用搜索显示的日期反驳“原文时间未确认”的说明。
+缺少正文或时间未确认的候选允许不入选；核对不足条数说明时区分候选数量与有充分正文证据的合格新闻数量。
 空简报结合发现结果和已取得正文核对原因，依赖故障不能充当没有新闻。
 公开正文须以中文表达，模型、机构和产品名称可保留原文；英文整段、空泛理由或夸大措辞反馈问题。
 合并同一事件的多篇报道；URL/hash及event_id只作线索，不能单凭相同ID或标题判重复。
@@ -268,8 +272,18 @@ class ReviewInput:
             materials.append(
                 {
                     "source_id": source_id,
+                    "candidate_id": meta.candidate_id,
+                    "url": meta.url,
                     "title": meta.title,
                     "content_hash": meta.content_hash,
+                    "publication_status": meta.publication.status,
+                    "published_at": meta.publication.published_at.isoformat()
+                    if meta.publication.published_at
+                    else None,
+                    "usable_in_window": meta.publication.status == "confirmed"
+                    and meta.publication.published_at is not None
+                    and context.window_start <= meta.publication.published_at <= context.window_end,
+                    "issues": list(meta.publication.issues),
                     **({"body": body} if include_bodies else {}),
                 }
             )

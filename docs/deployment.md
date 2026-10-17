@@ -30,7 +30,7 @@ docker compose ps
 
 默认持久卷 daily-ai-news-data 同时挂到 API/Worker 的 /data，保存 SQLite、来源快照、笔记和发送状态。原生 Python 运行的 ./data 与这个卷分别保留；数据导入和备份恢复按 5.2 的停写流程进行。普通 `docker compose down` 保留卷；停止/重建容器不会清空历史。不要在需要保留数据时使用 down -v 或删除该卷。
 
-config 目录只读挂载到 /config，默认加载 rss-sources.json，其中 NVIDIA 官方来源沿用已验证的入口。配置变更后用 `docker compose up -d --force-recreate api worker` 重新创建，使更新后的环境生效；镜像代码修改后先重新构建。仅 restart 不重新注入已更改的环境。
+config 目录只读挂载到 /config。RSS 默认关闭；需要官方 RSS 补充时，在 `.env` 设置 `RSS_ENABLED=true`，并用 `RSS_SOURCES_FILE` 指定可信来源清单（Compose 预设 /config/rss-sources.json）。其中 NVIDIA 官方来源沿用已验证的入口。关闭时不读取清单、不向模型开放 read_feed；只使用搜索和正文即可完成任务。启用后仍由模型按需选择，RSS 失败不妨碍已有合格正文提交；有效搜索确实零候选时，也不会仅因可选 RSS 故障阻止空简报。搜索或正文依赖失败仍不能冒充无新闻。配置变更后用 `docker compose up -d --force-recreate api worker` 重新创建，使更新后的环境生效；镜像代码修改后先重新构建。仅 restart 不重新注入已更改的环境。
 
 ### 权限与资源
 
@@ -53,6 +53,14 @@ docker compose restart worker
 ```
 
 日志轮转为每文件 10 MB、保留 3 份。Worker 中断后的任务租约、来源快照和邮件 unknown 规则继续生效。
+
+### Fake-IP 环境中的正文抓取
+
+`PUBLIC_DNS` 默认 `system`，使用运行环境的解析器。若代理将公开域名解析为 198.18.0.0/15，正文与 RSS 会返回 `PUBLIC_ADDRESS_BLOCKED`。可在本项目 `.env` 显式设置 `PUBLIC_DNS=google_doh`，再重新创建 API/Worker；不需要改操作系统或代理配置。
+
+该选项按 [Google Public DNS JSON API](https://developers.google.com/speed/public-dns/docs/doh/json) 向固定 HTTPS 端点查询公开来源域名的 A/AAAA 记录，关闭环境代理、重定向和客户端子网信息，不发送应用凭据、网页路径或用户偏好。Google 会收到所查询的公开域名。响应受原请求总超时、64 KiB 和地址数量限制；解析失败会明确反馈，不切回其他解析方式。每组返回地址仍全部经过公网校验，连接固定到已校验 IP，并继续验证实际 peer、原域名证书/SNI及每次网页跳转。内网、保留地址或混入私网的回答仍拒绝。
+
+只影响 RSS/网页来源的 DNS；模型、搜索、SMTP 配置保持各自的受信任端点。部署网络无法访问该 HTTPS DNS 时保留默认方式，并由维护者提供正常的公网解析。页面对没有取得任何正文的失败任务显示已保存的抓取错误说明，具体稿件检查反馈仍在任务时间线中。
 
 ### 本步验收
 

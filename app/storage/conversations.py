@@ -322,12 +322,44 @@ class ConversationStore:
             self.runs._append_event(connection, run_id, "submission_reminder", at, {})
             return run
 
-    def flush_notices(self, run_id: str, user_id: str, request_timeout: float) -> None:
+    def flush_notices(
+        self,
+        run_id: str,
+        user_id: str,
+        request_timeout: float,
+        *,
+        input_chars: int = 0,
+        max_input_chars: int | None = None,
+        review_reserve: int = 0,
+    ) -> None:
         """Append server guidance only after all IDs in a response have feedback."""
         with self.database.transaction() as connection:
             run = _record(self.runs._owned_row(connection, run_id, user_id))
             if run.status != "running" or self._unpaired(connection, run_id):
                 return
+            if (
+                review_reserve
+                and run.budget_limits.model_requests - run.budget_usage.model_requests <= 6
+            ):
+                self._notice(
+                    connection,
+                    run_id,
+                    "delivery_budget",
+                    "budget_warning",
+                    "模型预算接近提交与修订预留线，请立即收敛选题。优先提交已有可靠证据的少量新闻；"
+                    "首次提交后仍需一次独立核对、一次修订决策和最后一次核对，不要把剩余调用耗在批量补查。"
+                    "若需短引用请在本轮批量定位，或直接完整使用已返回preview及其字符范围。",
+                )
+            if max_input_chars and max_input_chars * 0.7 <= input_chars < max_input_chars:
+                self._notice(
+                    connection,
+                    run_id,
+                    "input_budget",
+                    "budget_warning",
+                    "输入材料接近容量上限，请停止批量发现和无关读取，使用时间已确认的正文形成少量合格稿件。"
+                    "用完整preview及其起止位置，或search_content精确定位短quote；保留一次修订所需空间。"
+                    "不得使用usable_in_window=false的来源，不得估算引用位置。",
+                )
             if self.guards.close_to_limit(run, request_timeout):
                 remaining = {
                     name: max(0, getattr(run.budget_limits, name) - amount)

@@ -15,6 +15,7 @@ from app.providers.bocha import BochaClient
 from app.runtime import open_runtime
 from app.storage.models import RunRequest, StateChange, SubscriptionSnapshot, timestamp
 from app.tools.executor import ToolExecutor
+from app.tools.models import ToolInvocation, ToolResult
 from app.tools.registry import ToolRegistry
 from app.tools.search import register_search
 from app.tools.submit import register_submission
@@ -342,6 +343,42 @@ def test_keyset_pagination_and_safe_events(client):
     assert all(event["id"] > first["next_after_id"] for event in rest["events"])
     assert "reasoning_content" not in json.dumps(rest)
     assert client.get(path).headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize(
+    "code,expected",
+    [
+        ("PUBLIC_ADDRESS_BLOCKED", "PUBLIC_ADDRESS_BLOCKED"),
+        ("PUBLIC_DNS_TIMEOUT", "PUBLIC_DNS_TIMEOUT"),
+        ("UNKNOWN_SOURCE_ERROR", None),
+    ],
+)
+def test_failed_run_projects_only_allowlisted_source_error(client, code, expected):
+    subscribe(client)
+    run_id = preview(client).json()["run_id"]
+    state = client.app.state
+    owner = client.get("/me").json()["user"]["id"]
+    call = ToolInvocation(tool_call_id="blocked", name="fetch_url", arguments="{}")
+    state.call_store.prepare_calls(run_id, owner, [call])
+    result = ToolResult.failure(code, "sensitive private diagnostic")
+    with state.database.transaction() as connection:
+        connection.execute(
+            "UPDATE tool_calls SET status='completed', finished_at=?, result_json=? WHERE run_id=?",
+            (timestamp(state.run_store.now()), result.model_dump_json(), run_id),
+        )
+    # A running task's transient failures must not become a final failure diagnosis.
+    assert client.get("/runs/" + run_id).json()["source_error_code"] is None
+    finish(client, run_id)
+    response = client.get("/runs/" + run_id)
+    assert response.json()["source_error_code"] == expected
+    assert "sensitive private diagnostic" not in response.text
+    # Existing source evidence takes precedence over an unrelated blocked candidate.
+    with state.database.transaction() as connection:
+        connection.execute(
+            "INSERT INTO sources VALUES(?,?,?,?,?,?)",
+            ("fixture-source", run_id, "https://example.com", "fixture-hash", "{}", "{}"),
+        )
+    assert client.get("/runs/" + run_id).json()["source_error_code"] is None
 
 
 def test_brief_pagination_empty_last_page_and_external_text_remains_json(client):
