@@ -1,0 +1,55 @@
+# 项目交付与人工测试入口
+
+本项目实现了模型自主工具调用、结构化反馈后补查、规则与独立模型核对、一次修订、持久恢复，以及登录/订阅/预览/历史、北京时间调度、SMTP 和容器部署。部署操作见 [deployment.md](deployment.md)，可复现验收见 [core-acceptance.md](core-acceptance.md)，逐次实测和未通过记录见 [acceptance.md](acceptance.md)。README 按用户协作约束保留。
+
+## 启动与使用
+
+已有本地 .env 已配置模型、搜索、会话与 QQ SMTP 参数；它不进入 Git，也不进入镜像。其他电脑从 .env.example 创建自己的配置。Windows 中文目录先运行 `python scripts/build_images.py`，随后 `docker compose up -d --no-build --wait api worker`；页面为 http://127.0.0.1:8000/。首次启动初始化命名卷数据库；原生 ./data 的迁入按部署说明操作。页面无内置账号，需注册。
+
+当前 SMTP_TEST_RECIPIENT 限定唯一测试收件人。测试账户用该地址注册或修改资料，保存话题、关注词、排除词和条数。预览只生成历史；需要验证邮件时，把推送时间设到下一个北京时间分钟并保持订阅开启，等调度任务完成。缺乏可用新闻时允许有依据的空简报；外部服务故障应看到明确失败事件。
+
+修改 .env 后重建容器才会重新注入配置：`docker compose up -d --no-build --force-recreate api worker`。单纯 restart 保留旧环境。当前容器健康只表示进程与 Worker 心跳正常。
+
+## 人工测试顺序
+
+1. 注册、退出后登录，保存资料与订阅；刷新后数据仍存在。另建账号检查历史隔离。
+2. 立即预览，查看查询/工具结果、失败与反馈、任务进度、来源引用、简报和历史。切换任务/历史后内容应保持所选项。
+3. 选择不同偏好，核对选题理由、排除词及未覆盖话题说明；中英文来源均以中文整理。
+4. 暂停订阅，确认新预览/调度/邮件被阻止；恢复并设置未来时间验证定时生成、日唯一和邮件状态。unknown 必须确认重复风险后才会重发。
+5. 重启 API/Worker 后读取历史与任务；再按部署说明在独立新卷演练备份恢复。
+
+这五步包含外部服务，需先解决下节的公网解析问题。纯替身轨迹与接口回归已可独立运行。五份真实新闻简报的人工审阅逐条检查：摘要和关键事实是否被完整正文支持、数字/单位/比较条件、引用字符位置、日期是否落入固定窗口、偏好与中文表达、历史是否已有相同事实，并记录发现的问题。
+
+## 交付边界与待验收
+
+| 项目 | 本轮状态 | 后续动作 |
+| --- | --- | --- |
+| 模型决策、质量与恢复 | 真实 DeepSeek 三个固定材料研究场景通过；真实核对复验暴露的完全重复事实漏判已修复 | 人工审阅固定样例和真实新闻结果；语义核对仍可能出错 |
+| 博查 | 当前真实请求返回候选 | 随真实完整研究继续观察结果与日期 |
+| 官方 RSS/公开正文 | 既往 NVIDIA 联通通过；本轮本机与容器均得到 198.18.* Fake-IP，连接前被拒绝 | 代理 DNS 返回真实公网地址后复验；保留 SSRF 校验 |
+| 五份真实新闻与定位统计 | 真实来源完整研究受上述解析阻塞，五份人工验收未完成 | 运行真实研究用例，审阅保存正文；统计定位一致性/漏检、调用、token、耗时 |
+| QQ SMTP | 一封标注的测试邮件被服务器接受，用户已确认 Gmail 实际收到 | 本次指定邮箱联通通过；后续真实新闻推送随完整研究验收 |
+| Linux HTTPS | Compose 配置/可信转发/Secure Cookie 用例通过，Caddy 示例校验有效 | 实际服务器部署后验域名证书、跳转、端口、登录、续期 |
+
+Fake-IP 排查：在运行应用的环境查询 blogs.nvidia.com。198.18.0.0/15 属于此项目拒绝的非公网地址；应在代理的 DNS 模式或 Fake-IP 排除规则中使目标域名返回真实公网解析。具体操作按所用代理的文档，项目不改系统代理/DNS。Windows 中可用 `Resolve-DnsName blogs.nvidia.com` 只读查看；Docker 环境也需要确认解析已恢复。当前明确记录的是环境阻塞，未将公开地址校验改为允许保留网段。
+
+## 验收命令与材料
+
+```powershell
+# 完整离线、前端及本地真实容器；不调用付费服务或真实邮箱
+.venv\Scripts\python.exe scripts/verify.py --docker --node 你的Node可执行文件路径
+
+# 网络恢复后，单独显式执行真实发现与五份预览研究
+$env:NEWS_SERVICES_LIVE='1'
+.venv\Scripts\python.exe -m pytest tests/test_services_live.py -k 'discovery_provider or real_research' -q
+Remove-Item Env:NEWS_SERVICES_LIVE
+
+# 检查已跟踪文件中的实际配置密钥、误纳入的.env和数据
+.venv\Scripts\python.exe scripts/check_delivery.py
+```
+
+真实研究报告每次保存在 data/acceptance/services-live-<日期>/research/<UUID>，含简报、run_id、窗口、调用、token 和耗时；同目录 news.sqlite3 与 runs 保存原始证据和受控协议。报告供审阅，不公开上传。外部邮箱用例名为 test_real_qq_smtp_to_explicit_test_recipient，每次显式运行会额外发送一封测试邮件；本轮已发送的一封不需重发。
+
+交付提交依次为 abd2c11（镜像/Compose）、2ef5c9b（备份/HTTPS）、2ff5d7c（核心回归）、8f46102（真实验收与重复修复）；最终提交见 Git main。代码、测试、部署与验收资料可在仓库 review，.env、数据库和运行材料持续忽略。
+
+2026-10-17 最终本地实例已按新镜像启动，API/Worker 均 healthy，主页与全部静态资源返回200。代码回归1349项、真实容器7项、前端15项通过，代码回归覆盖率95.84%；详见 acceptance.md。Gmail收件已由用户确认，网络与真实新闻验收继续保留。

@@ -29,3 +29,9 @@ def script():
 @router.get("/assets/app.css", include_in_schema=False)
 def styles():
     return FileResponse(ROOT / "app.css", media_type="text/css", headers=HEADERS)
+
+
+@router.get("/assets/favicon.svg", include_in_schema=False)
+@router.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return FileResponse(ROOT / "favicon.svg", media_type="image/svg+xml", headers=HEADERS)

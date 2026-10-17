@@ -67,6 +67,8 @@ def test_real_compose_health_restart_persistence_and_worker_bash(tmp_path):
             assert len(sockets) == (1 if service == "worker" else 0)
         with httpx.Client(base_url=f"http://127.0.0.1:{port}", trust_env=False, timeout=5) as api:
             assert api.get("/").status_code == 200 and api.get("/assets/app.js").status_code == 200
+            assert api.get("/assets/favicon.svg").status_code == 200
+            assert api.get("/favicon.ico").headers["content-type"] == "image/svg+xml"
             csrf = api.get("/auth/session").json()["csrf_token"]
             registered = api.post(
                 "/auth/register",

@@ -154,7 +154,8 @@ class ReviewInput:
         """Reject only an exact event/version/fact-set match; semantic cases stay with the model."""
 
         def facts(values):
-            return {" ".join(value.split()).casefold() for value in values}
+            # Case can change a unit's meaning (GB vs Gb); preserve factual text exactly.
+            return {" ".join(value.split()) for value in values}
 
         for i, item in enumerate(draft.items):
             if item.product_version is None:

@@ -20,7 +20,7 @@
 | 1：中文、最多五条、时间与固定引用 | test_briefs.py、test_review.py、test_fetch.py | 条数与时间拒绝；字符位置/摘录/正文哈希一致；数字、比较条件与中文检查 |
 | 2：结果/零结果、抓取成败、定位未命中调整 | test_phase_two.py、test_research.py、test_feeds.py、test_fetch.py | 同一候选结构；空清单后搜索，403 后换来源，中文未命中后英文命中并读回 |
 | 3：话题缺口与补查 | test_research.py、test_phase_two.py | collected/missing/issues 持久化；后续查询、选择与缺口一致 |
-| 4：摘要修订与事件去重 | test_review.py、test_phase_three.py、test_research.py | 数字/条件/范围问题反馈，一次修订；同事件合并、无变化历史拒绝、新版本可通过 |
+| 4：摘要修订与事件去重 | test_review.py、test_phase_three.py、test_research.py | 数字/条件/范围问题反馈，一次修订；同ID/明确版本/完整事实集合一致先拒绝，其余由模型核对；同事件合并、新版本检查 |
 | 5：响应、工具、入队、SMTP 接受后中断 | test_recovery.py、test_phase_three.py、test_recovery_docker_live.py、test_mail.py | 同 run/窗口/快照/预算恢复，简报和入队唯一；不确定邮件停止自动重发 |
 | 6：凭据与权限/诱导/预算 | test_tool_execution.py、test_files.py、test_public_http.py、test_harness.py、test_auth.py | 目录、SSRF、用户隔离、网页诱导、限流、上下文与预算边界；真实 Bash 无网络/凭据/socket |
 | 7：登录至预览/历史/调度邮件 | test_product_api.py、test_schedules.py、test_mail.py、test_compose_live.py | API 闭环、真实本地 TCP SMTP、定时日唯一、页面已审计；真实模型与真实邮箱另见 5.4 |

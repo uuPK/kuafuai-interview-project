@@ -193,7 +193,17 @@ def test_related_history_is_bounded_and_never_silently_omitted(tool_env, monkeyp
 
 
 @pytest.mark.parametrize(
-    "change", ["none", "reordered", "new_fact", "new_version", "other_id", "no_version"]
+    "change",
+    [
+        "none",
+        "reordered",
+        "whitespace",
+        "unit_case",
+        "new_fact",
+        "new_version",
+        "other_id",
+        "no_version",
+    ],
 )
 def test_exact_delivered_facts_rejected_but_semantic_cases_reach_reviewer(tool_env, change):
     async def run():
@@ -204,6 +214,10 @@ def test_exact_delivered_facts_rejected_but_semantic_cases_reach_reviewer(tool_e
             await seed_history(env, facts=tuple(historical), event_id="atlas-v2", version="v2")
             if change == "reordered":
                 item["key_facts"] = list(reversed(historical))
+            elif change == "whitespace":
+                item["key_facts"] = [fact.replace("8 GB", "8   GB") for fact in historical]
+            elif change == "unit_case":
+                item["key_facts"] = [fact.replace("8 GB", "8 Gb") for fact in historical]
             elif change == "new_fact":
                 item["key_facts"] = [*historical, "权重现可获取"]
             elif change == "new_version":
@@ -213,7 +227,7 @@ def test_exact_delivered_facts_rejected_but_semantic_cases_reach_reviewer(tool_e
             elif change == "no_version":
                 item["product_version"] = None
             result = await run_submit(world, draft(item))
-            if change in {"none", "reordered"}:
+            if change in {"none", "reordered", "whitespace"}:
                 assert result.error.code == "BRIEF_REVIEW_REJECTED" and not model.requests
                 assert result.error.details[0].field == "draft.items[0].key_facts"
                 assert (
