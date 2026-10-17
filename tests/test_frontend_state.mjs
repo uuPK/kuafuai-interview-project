@@ -11,6 +11,57 @@ import {
   brief,
 } from "./frontend_support.mjs";
 
+test("time gaps are visible beside main news and doubtful sources stay in a separate linked section", async () => {
+  const document = {
+    title: "有信息说明的简报",
+    uncovered_topics: [],
+    items: [
+      {
+        title: "主新闻",
+        summary: "正文支持的内容",
+        selection_reason: "订阅相关",
+        verification_notes: ["发布时间未确认"],
+        citations: [{ url: "https://example.com/main", quote: "原文事实" }],
+      },
+    ],
+    unverified_items: [
+      {
+        title: "<script>原文标题</script>",
+        reason: "报道数字互相矛盾",
+        url: "https://example.com/uncertain",
+      },
+      { title: "无效链接", reason: "待查", url: "javascript:alert(1)" },
+    ],
+  };
+  const ui = harness(() => ({ mode: "preview", document }));
+  await ui.run("showBrief('brief-A')");
+  const content = ui.get("brief-content");
+  assert.match(content.children[0].textContent, /发布时间未确认/);
+  const pending = content.children[1];
+  assert.match(pending.textContent, /待核实信息/);
+  assert.match(pending.textContent, /不计入主新闻条数/);
+  assert.match(pending.textContent, /<script>原文标题<\/script>/);
+  assert.equal(
+    pending.children[2].children.at(-1).href,
+    "https://example.com/uncertain",
+  );
+  assert.match(pending.children[3].textContent, /来源链接无效/);
+});
+
+test("pending-only briefs never claim there were no candidates", async () => {
+  const value = brief("待核实简报");
+  value.document.unverified_items = [
+    { title: "候选", reason: "尚未确认", url: "https://example.com/news" },
+  ];
+  const ui = harness(() => value);
+  await ui.run("showBrief('brief-A')");
+  assert.match(ui.get("brief-content").textContent, /尚无可确认的主新闻/);
+  assert.doesNotMatch(
+    ui.get("brief-content").textContent,
+    /暂无符合订阅条件的新闻/,
+  );
+});
+
 test("late terminal task events cannot open its brief after selecting another task", async () => {
   const slowEvents = deferred();
   const ui = harness((path) => {

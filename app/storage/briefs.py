@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from pydantic import Field
 
-from app.agent.briefs import BriefDocument, BriefDraft, SubmitParameters
+from app.agent.briefs import BriefDocument, BriefDraft, PublishedUnverifiedItem, SubmitParameters
 from app.agent.research import HistoryEvent
 from app.harness.failures import FATAL_CATEGORIES, FailureInfo
 from app.storage.models import StateChange, StoredModel, timestamp
@@ -26,6 +26,7 @@ class SubmissionJob(StoredModel):
     draft: BriefDraft
     sources: tuple[SourceMetadata, ...] = Field(max_length=50)
     duplicate_hints: tuple[dict, ...] = Field(max_length=100)
+    unverified_items: tuple[PublishedUnverifiedItem, ...] = Field(default=(), max_length=5)
 
     @property
     def result(self):
@@ -33,7 +34,9 @@ class SubmissionJob(StoredModel):
             {
                 "accepted": True,
                 "brief_id": self.brief_id,
-                "status": "completed" if self.draft.items else "no_news",
+                "status": "completed"
+                if self.draft.items or self.draft.unverified_items
+                else "no_news",
                 "review_basis": self.review_basis,
             }
         )
@@ -99,6 +102,7 @@ class BriefStore:
             rejected is not None
             or checked.sources != job.sources
             or checked.duplicate_hints != job.duplicate_hints
+            or checked.document.unverified_items != job.unverified_items
         ):
             self._problem()
         return checked
@@ -131,6 +135,7 @@ class BriefStore:
             draft=draft,
             sources=checked.sources,
             duplicate_hints=checked.duplicate_hints,
+            unverified_items=checked.document.unverified_items,
             review_basis=review_basis,
         )
         if len(job.result.model_dump_json()) > self.rules.settings.max_tool_result_chars:
@@ -149,6 +154,7 @@ class BriefStore:
                     saved.draft != draft
                     or saved.sources != checked.sources
                     or saved.review_basis != review_basis
+                    or saved.unverified_items != checked.document.unverified_items
                 ):
                     self._problem()
                 return saved.result

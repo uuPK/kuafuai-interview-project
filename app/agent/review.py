@@ -5,6 +5,7 @@ import re
 
 from app.agent.briefs import ReviewOutcome
 from app.agent.protocol import InputMessage, ModelFailure, ModelRequest, ModelResponse
+from app.agent.verification import publication_display
 from app.harness.execution import LeaseLostError
 from app.harness.redaction import Redactor
 from app.storage.reviews import ReviewStore
@@ -26,18 +27,24 @@ field必须是草稿中存在的字段路径，例如draft.items[0].summary；is
 在报告“遗漏条件”前，必须重新阅读完整summary/key_facts：已经明确出现的条件不能再次要求补充。
 例如“在A设备、B配置下相比C提升10%”已经保留条件；不能误称该句没有设备、配置或比较对象。
 中文等义翻译允许，不能凭空要求来源未提到且草稿也未声称的细节。
+常用机构简称和普通等义复述允许，例如“发展和改革委员会/发展改革委”、“花5个月造出/用5个月自建”；没有改变主体、数字、时间、范围或授权关系时，不因字面差异拒绝，不把润色偏好当成事实问题。
 核对简报标题、每条标题/摘要/key_facts/selection_reason是否得到该条服务端引用和相邻正文支持：
 检查数字、单位、实体、发布日期、产品版本、比较对象、测试硬件/配置、适用范围和限制。
 不能把预测写成事实、把有条件比较写成普遍结论，也不能用另一条新闻的材料支持本条。
 引用虽逐字正确，仍要检查是否断章取义；相邻上下文中的条件、否定和表格单位必须保留。
+quote是定位锚点，context也是同一固定正文的证据。判断事实缺证前须检查该条所有evidence的quote和context；事实已在任一context中明确出现时，不能因它不在短quote中就判为缺少引用。
 上下文有边界且无法支持关键判断时明确要求重读/补充证据，不猜测截断部分。
 概括性标题可以不重复摘要中的数字或条件，只要没有错误或夸大的具体断言；通用简报标题允许。
 event_date、entities、product_version均为可选信息，未填不构成错误；发布时间不自动等于事件日期。
 按用户话题/关注词检查相关性、实际价值和选题理由；核对未覆盖话题与不足条数说明是否有依据。
 max_items是条数上限，不要求凑满；不能仅因搜索还有其他候选就以“遗漏新闻”拒绝稿件。
-发现结果只是线索，date_clues与摘要不能确认发布时间或事实；日期以materials中的服务端publication_status、published_at、usable_in_window为准。
-usable_in_window=false的候选不能要求入稿；不能用搜索显示的日期反驳“原文时间未确认”的说明。
-缺少正文或时间未确认的候选允许不入选；核对不足条数说明时区分候选数量与有充分正文证据的合格新闻数量。
+发现结果只是线索，date_clues与摘要不能确认发布时间或事实；日期以服务端publication_status/published_at为准。
+主新闻有充分正文支持但仅缺少发布时间、时区或时间冲突，可以显示并由服务端自动加verification_notes；不能仅因时间缺项拒绝，也不能要求其必须补齐日期。
+publication_note只说明时间信息不足，不代表正文事实不可靠。媒体报道可作为已注明来源的依据；不能仅因时间未确认或来源为媒体，要求改引官方主来源或把有正文支持的数字移入待核实。
+display_eligible=true的来源可使用，usable_in_window只表示时间已确认。明确超窗的来源不得被写成窗口内新闻。
+主新闻的标题/摘要不能把未确认的日期表述为“今日发布”等确定结论；数字、范围、实体等事实仍须被正文支持。
+unverified_items是单独附在末尾的待核实候选，不是已证实新闻、不计入主新闻条数。只核对原因与已保存观察是否一致、订阅相关性和是否误称已证实；缺少正文或事实仍待查证正是允许列在此处的原因，不能因此拒绝这份交付。
+display_notes和unverified_sources由服务端生成，前者会明确展示缺项，后者提供已发现原文链接。候选已移至待核实列表时，不再按主新闻的事实和引用标准要求其通过。
 空简报结合发现结果和已取得正文核对原因，依赖故障不能充当没有新闻。
 公开正文须以中文表达，模型、机构和产品名称可保留原文；英文整段、空泛理由或夸大措辞反馈问题。
 合并同一事件的多篇报道；URL/hash及event_id只作线索，不能单凭相同ID或标题判重复。
@@ -80,6 +87,13 @@ def parse_review(response, draft):
             object_pairs_hook=_unique_object,
             parse_constant=_reject_constant,
         )
+        if isinstance(raw, dict) and isinstance(raw.get("issues"), list):
+            for issue in raw["issues"]:
+                text = issue.get("issue") if isinstance(issue, dict) else None
+                if isinstance(text, str) and 80 < len(text) <= 500 and text.strip():
+                    # Preserve the decision and full saved response; bound only the feedback text.
+                    text = text.strip()
+                    issue["issue"] = text if len(text) <= 80 else text[:79] + "…"
         outcome = ReviewOutcome.model_validate_json(json.dumps(raw, ensure_ascii=False))
         fields = draft_fields(draft)
         if any(issue.field not in fields or not issue.issue.strip() for issue in outcome.issues):
@@ -115,6 +129,10 @@ class ReviewInput:
         )
         if draft.shortfall_reason:
             values.append(("draft.shortfall_reason", draft.shortfall_reason))
+        values.extend(
+            (f"draft.unverified_items[{i}].reason", item.reason)
+            for i, item in enumerate(draft.unverified_items)
+        )
         for field, text in values:
             if not re.search(r"[\u3400-\u9fff]", text):
                 raise ReviewInputProblem(
@@ -224,7 +242,13 @@ class ReviewInput:
                         "url": meta.url,
                         "title": meta.title,
                         "content_hash": meta.content_hash,
-                        "published_at": meta.publication.published_at.isoformat(),
+                        "published_at": meta.publication.published_at.isoformat()
+                        if meta.publication.published_at
+                        else None,
+                        "publication_status": meta.publication.status,
+                        "publication_note": publication_display(
+                            meta.publication, context.window_start, context.window_end
+                        )[1],
                         "start_offset": ref.start_offset,
                         "end_offset": ref.end_offset,
                         "quote": body[ref.start_offset : ref.end_offset],
@@ -283,6 +307,12 @@ class ReviewInput:
                     "usable_in_window": meta.publication.status == "confirmed"
                     and meta.publication.published_at is not None
                     and context.window_start <= meta.publication.published_at <= context.window_end,
+                    "display_eligible": publication_display(
+                        meta.publication, context.window_start, context.window_end
+                    )[0],
+                    "publication_note": publication_display(
+                        meta.publication, context.window_start, context.window_end
+                    )[1],
                     "issues": list(meta.publication.issues),
                     **({"body": body} if include_bodies else {}),
                 }
@@ -309,9 +339,16 @@ class ReviewInput:
             "history_days": self.HISTORY_DAYS,
             "duplicate_hints": list(checked.duplicate_hints),
             "allowed_issue_fields": draft_fields(draft),
+            "display_notes": [
+                {"field": f"draft.items[{i}]", "notes": list(item.verification_notes)}
+                for i, item in enumerate(checked.document.items)
+            ],
+            "unverified_sources": [
+                item.model_dump(mode="json") for item in checked.document.unverified_items
+            ],
         }
         packet["research_observations"] = self.research_evidence(
-            context, include_bodies=not draft.items
+            context, include_bodies=not draft.items and not draft.unverified_items
         )
         packet = json.loads(json.dumps(packet, ensure_ascii=False))
         if self.redactor.clean(packet) != packet:

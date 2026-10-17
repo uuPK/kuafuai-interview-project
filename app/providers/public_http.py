@@ -169,15 +169,17 @@ class CheckedStream(httpcore.AsyncNetworkStream):
         await self.stream.aclose()
 
     async def start_tls(self, ssl_context, server_hostname=None, timeout=None):
-        self.check_peer()
-        upgraded = await self.stream.start_tls(ssl_context, server_hostname, timeout)
-        checked = CheckedStream(upgraded, self.address)
+        upgraded = self.stream
         try:
+            self.check_peer()
+            upgraded = await self.stream.start_tls(ssl_context, server_hostname, timeout)
+            checked = CheckedStream(upgraded, self.address)
             checked.check_peer()
+            return checked
         except BaseException:
+            # TLS may be cancelled before httpcore owns an HTTP connection to close.
             await upgraded.aclose()
             raise
-        return checked
 
     def get_extra_info(self, info):
         return self.stream.get_extra_info(info)

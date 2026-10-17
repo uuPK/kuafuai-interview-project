@@ -315,6 +315,19 @@ footer {
   color: var(--muted);
   font-size: 0.8rem;
 }
+.verification-note {
+  padding: 0.65rem 0.8rem;
+  border-left: 3px solid #a66b19;
+  background: #fff5df;
+  color: #664716;
+  overflow-wrap: anywhere;
+}
+.unverified-items {
+  border-top: 2px solid var(--line);
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  overflow-wrap: anywhere;
+}
 @media (max-width: 850px) {
   .workspace {
     grid-template-columns: 1fr;

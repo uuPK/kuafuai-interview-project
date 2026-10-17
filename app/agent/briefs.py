@@ -1,7 +1,7 @@
 """Model drafts and server-rendered evidence, with separate trust boundaries."""
 
 from datetime import date
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, Field, StringConstraints, model_validator
 
@@ -36,11 +36,20 @@ class UncoveredTopic(ToolParameters):
     reason: Text = Field(max_length=500)
 
 
+class UnverifiedItem(ToolParameters):
+    candidate_id: str = Field(pattern=r"^cand-[a-f0-9]{32}$")
+    reason: Text = Field(
+        max_length=500,
+        description="未能确认的事实、来源矛盾或无法取得正文等具体原因；不要写成已证实结论。",
+    )
+
+
 class BriefDraft(ToolParameters):
     title: Text = Field(max_length=300)
     items: tuple[BriefItem, ...] = Field(max_length=5)
     uncovered_topics: tuple[UncoveredTopic, ...] = Field(default=(), max_length=20)
     shortfall_reason: Text | None = Field(default=None, max_length=500)
+    unverified_items: tuple[UnverifiedItem, ...] = Field(default=(), max_length=5)
 
 
 class SubmitParameters(ToolParameters):
@@ -50,15 +59,35 @@ class SubmitParameters(ToolParameters):
 class PublishedCitation(BriefCitation):
     url: str
     content_hash: str
-    published_at: AwareDatetime
+    published_at: AwareDatetime | None = None
+    publication_status: Literal["confirmed", "missing", "ambiguous", "conflicting"] = "confirmed"
 
 
 class PublishedItem(BriefItem):
     citations: tuple[PublishedCitation, ...] = Field(min_length=1, max_length=10)
+    verification_notes: tuple[Text, ...] = Field(default=(), max_length=10)
+
+    @model_validator(mode="after")
+    def require_time_notes(self):
+        if (
+            any(
+                c.published_at is None or c.publication_status != "confirmed"
+                for c in self.citations
+            )
+            and not self.verification_notes
+        ):
+            raise ValueError("unconfirmed publication requires a visible verification note")
+        return self
+
+
+class PublishedUnverifiedItem(UnverifiedItem):
+    title: Text = Field(max_length=300)
+    url: str
 
 
 class BriefDocument(BriefDraft):
     items: tuple[PublishedItem, ...] = Field(max_length=5)
+    unverified_items: tuple[PublishedUnverifiedItem, ...] = Field(default=(), max_length=5)
 
 
 class ReviewOutcome(ToolParameters):

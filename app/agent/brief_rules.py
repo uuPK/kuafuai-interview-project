@@ -2,7 +2,13 @@
 
 from dataclasses import dataclass
 
-from app.agent.briefs import BriefDocument, PublishedCitation, PublishedItem
+from app.agent.briefs import (
+    BriefDocument,
+    PublishedCitation,
+    PublishedItem,
+    PublishedUnverifiedItem,
+)
+from app.agent.verification import publication_display
 from app.harness.redaction import Redactor
 from app.storage.snapshots import SourceMetadata
 from app.tools.models import ArgumentIssue, ToolFailure, ToolResult
@@ -53,7 +59,7 @@ class BriefRules:
             issue("draft.title", "简报标题命中排除关键词")
         loaded, published, used, scanned = {}, [], {}, 0
         for i, item in enumerate(draft.items):
-            citations, seen = [], set()
+            citations, seen, notes = [], set(), []
             item_text = "\n".join(
                 (
                     item.title,
@@ -89,13 +95,14 @@ class BriefRules:
                 meta, body = loaded[citation.source_id]
                 used.setdefault(meta.source_id, set()).add(i)
                 publication = meta.publication
-                if (
-                    publication.status != "confirmed"
-                    or publication.published_at is None
-                    or not context.window_start <= publication.published_at <= context.window_end
-                ):
-                    issue(field + ".source_id", "原文发布时间未确认在本任务固定新闻窗口内")
+                eligible, note = publication_display(
+                    publication, context.window_start, context.window_end
+                )
+                if not eligible:
+                    issue(field + ".source_id", note)
                     continue
+                if note and note not in notes:
+                    notes.append(note)
                 if not 0 <= citation.start_offset < citation.end_offset <= len(body):
                     issue(field, "引用范围须为正文内非空字符区间[start_offset,end_offset)")
                     continue
@@ -148,14 +155,51 @@ class BriefRules:
                         url=meta.url,
                         content_hash=meta.content_hash,
                         published_at=publication.published_at,
+                        publication_status=publication.status,
                     )
                 )
             if len(citations) == len(item.citations):
                 published.append(
-                    PublishedItem(**{**item.model_dump(), "citations": tuple(citations)})
+                    PublishedItem(
+                        **{
+                            **item.model_dump(),
+                            "citations": tuple(citations),
+                            "verification_notes": tuple(notes),
+                        }
+                    )
                 )
 
-        if not draft.items:
+        pending, seen_candidates = [], set()
+        main_candidates = {meta.candidate_id for meta, _ in loaded.values()}
+        for i, item in enumerate(draft.unverified_items):
+            field = f"draft.unverified_items[{i}]"
+            if item.candidate_id in seen_candidates or item.candidate_id in main_candidates:
+                issue(field + ".candidate_id", "候选不能重复，或同时出现在主新闻与待核实列表")
+                continue
+            seen_candidates.add(item.candidate_id)
+            try:
+                candidate = self.sources.candidates.get_candidate(
+                    context.run_id, context.user_id, item.candidate_id
+                )
+            except LookupError:
+                issue(field + ".candidate_id", "待核实来源不存在或不属于当前任务")
+                continue
+            material = candidate.material
+            if self.redactor.contains_credential(material.url):
+                issue(field + ".candidate_id", "待核实来源地址含敏感信息，不能展示")
+                continue
+            if any(word in (material.title + "\n" + item.reason).casefold() for word in exclusions):
+                issue(field, "待核实信息命中排除关键词")
+                continue
+            pending.append(
+                PublishedUnverifiedItem(
+                    **item.model_dump(),
+                    title=material.title.strip()[:300] or "待核实来源",
+                    url=material.url,
+                )
+            )
+
+        if not draft.items and not draft.unverified_items:
             self._empty_evidence(context, issue)
         if problems:
             return None, self.rejection(problems)
@@ -168,13 +212,15 @@ class BriefRules:
             for (kind, _), indices in groups.items()
             if len(indices) > 1
         )
-        document = BriefDocument(**{**draft.model_dump(), "items": tuple(published)})
+        document = BriefDocument(
+            **{**draft.model_dump(), "items": tuple(published), "unverified_items": tuple(pending)}
+        )
         return CheckedBrief(document, tuple(meta for meta, _ in loaded.values()), hints), None
 
-    def rejection(self, problems, *, code="BRIEF_RULES_REJECTED"):
+    def rejection(self, problems, *, code="BRIEF_RULES_REJECTED", message=None):
         details = tuple(problems[:10])
         result = ToolResult.failure(
-            code, "提交检查未通过，请根据details修改稿件。", details=details
+            code, message or "提交检查未通过，请根据details修改稿件。", details=details
         )
         while len(result.model_dump_json()) > self.settings.max_tool_result_chars and details:
             details = details[:-1]

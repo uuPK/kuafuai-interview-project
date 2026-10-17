@@ -4,7 +4,7 @@ const labels = {
   running: "研究中",
   waiting_retry: "等待重试",
   completed: "已完成",
-  no_news: "暂无符合条件的新闻",
+  no_news: "暂无已核实新闻",
   failed: "未完成",
   pending: "待发送",
   sending: "发送中",
@@ -338,7 +338,7 @@ async function loadList(kind, fresh = false) {
         "small",
         kind === "runs"
           ? `任务 ${id.slice(0, 8)}`
-          : `${localTime(item.created_at)} · ${item.item_count} 条${item.review_basis === "fixture" ? " · 测试材料" : ""}`,
+          : `${localTime(item.created_at)} · ${item.item_count} 条${item.unverified_count ? ` · ${item.unverified_count} 条待核实` : ""}${item.review_basis === "fixture" ? " · 测试材料" : ""}`,
       ),
     );
     button.addEventListener("click", () =>
@@ -498,16 +498,53 @@ async function showBrief(id) {
   const content = $("brief-content");
   content.replaceChildren();
   if (!b.document.items.length)
-    content.append(node("p", "暂无符合订阅条件的新闻。"));
+    content.append(
+      node(
+        "p",
+        b.document.unverified_items?.length
+          ? "本次尚无可确认的主新闻，以下候选仍待核实。"
+          : "暂无符合订阅条件的新闻。",
+      ),
+    );
   for (const [index, item] of b.document.items.entries()) {
     const article = node("section", undefined, "news-item");
+    article.append(node("h3", `${index + 1}. ${item.title}`));
+    for (const note of item.verification_notes || [])
+      article.append(node("p", "信息说明：" + note, "verification-note"));
     article.append(
-      node("h3", `${index + 1}. ${item.title}`),
       node("p", item.summary),
       node("p", "入选理由：" + item.selection_reason, "muted"),
     );
     for (const c of item.citations) article.append(citation(c));
     content.append(article);
+  }
+  if (b.document.unverified_items?.length) {
+    const section = node("section", undefined, "unverified-items");
+    section.append(
+      node("h3", "待核实信息"),
+      node(
+        "p",
+        "以下内容尚未确认，不计入主新闻条数。请结合原因与原文自行核实。",
+        "muted",
+      ),
+    );
+    for (const item of b.document.unverified_items) {
+      const candidate = node("section", undefined, "news-item");
+      candidate.append(
+        node("h4", item.title),
+        node("p", "待核实原因：" + item.reason),
+      );
+      const href = safeURL(item.url);
+      if (href) {
+        const link = node("a", "查看待核实原文");
+        link.href = href;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        candidate.append(link);
+      } else candidate.append(node("p", "来源链接无效"));
+      section.append(candidate);
+    }
+    content.append(section);
   }
   for (const item of b.document.uncovered_topics)
     content.append(

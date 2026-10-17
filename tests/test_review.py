@@ -156,6 +156,8 @@ def test_review_receives_candidate_time_status_even_for_unselected_material(tool
         '{"approved":false,"issues":[{"field":"draft.items[99].summary","issue":"错"}]}',
         '{"approved":false,"issues":[{"field":"draft","issue":" "}]}',
         '{"approved":false,"issues":[{"field":"draft","issue":NaN}]}',
+        json.dumps({"approved": False, "issues": [{"field": "draft", "issue": " " * 81}]}),
+        json.dumps({"approved": False, "issues": [{"field": "draft", "issue": "错" * 501}]}),
     ],
 )
 def test_review_output_must_be_complete_strict_and_located(content):
@@ -347,9 +349,15 @@ def test_schema_failure_counts_and_duplicate_id_does_not(brief_env):
     assert [e.data["submission_attempts"] for e in events] == [1, 2]
 
 
-def test_agent_revises_semantic_issue_and_only_checks_twice(tool_env, response_factory):
+@pytest.mark.parametrize("long_feedback", [False, True])
+def test_agent_revises_semantic_issue_and_only_checks_twice(
+    tool_env, response_factory, long_feedback
+):
     async def run():
-        model = ReviewModel(reject(), {"approved": True, "issues": []})
+        feedback = "原文为23%，没有支持99%的数字"
+        if long_feedback:
+            feedback += "；请保留设备、配置与比较条件" * 10
+        model = ReviewModel(reject(issue=feedback), {"approved": True, "issues": []})
         async with review_world(tool_env, model) as world:
             good = draft(await draft_item(world))
             bad = deepcopy(good)
@@ -359,6 +367,7 @@ def test_agent_revises_semantic_issue_and_only_checks_twice(tool_env, response_f
                 result = json.loads(request.messages[-1].content)
                 assert result["error"]["code"] == "BRIEF_REVIEW_REJECTED"
                 assert "23%" in result["error"]["details"][0]["issue"]
+                assert len(result["error"]["details"][0]["issue"]) <= 80
                 return response_factory(("s2", "submit_brief", {"draft": good}))
 
             research = ScriptedModel(
@@ -371,6 +380,13 @@ def test_agent_revises_semantic_issue_and_only_checks_twice(tool_env, response_f
             assert done.status == "completed" and done.budget_usage.model_requests == 4
             assert len(model.requests) == 2
             assert len(conversations.responses(done.id, "user-1")) == 2
+            with tool_env.database.connection() as connection:
+                raw = connection.execute(
+                    "SELECT response_json FROM brief_reviews ORDER BY rowid LIMIT 1"
+                ).fetchone()[0]
+            assert (
+                json.loads(json.loads(raw)["message"]["content"])["issues"][0]["issue"] == feedback
+            )
 
     asyncio.run(run())
 

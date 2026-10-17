@@ -150,6 +150,50 @@ def test_tls_peer_is_checked_again():
     assert stream.closed and stream.writes == []
 
 
+@pytest.mark.parametrize("failure", [httpcore.ConnectTimeout, asyncio.CancelledError])
+def test_failed_or_cancelled_tls_closes_original_stream(failure):
+    class BrokenTLS(Stream):
+        async def start_tls(self, *args):
+            raise failure()
+
+    stream = BrokenTLS()
+    checked = CheckedStream(stream, public_address("8.8.8.8"))
+    with pytest.raises(failure):
+        asyncio.run(checked.start_tls(ssl.create_default_context(), "example.com"))
+    assert stream.closed and not stream.writes
+
+
+def test_tls_precheck_failure_closes_original_stream():
+    stream = Stream(address="1.1.1.1")
+    checked = CheckedStream(stream, public_address("8.8.8.8"))
+    with pytest.raises(ToolFailure, match="PUBLIC_PEER_MISMATCH"):
+        asyncio.run(checked.start_tls(ssl.create_default_context(), "example.com"))
+    assert stream.closed and stream.sni is None
+
+
+def test_whole_fetch_deadline_closes_socket_during_tls_handshake():
+    class PendingTLS(Stream):
+        async def start_tls(self, *args):
+            await asyncio.Event().wait()
+
+    stream = PendingTLS()
+
+    async def connect(*args, **kwargs):
+        return stream
+
+    async def run():
+        transport = PublicTransport(
+            backend=PublicBackend(resolver=answers, backend=SimpleNamespace(connect_tcp=connect))
+        )
+        config = Settings(_env_file=None, request_timeout_seconds=0.02)
+        async with PublicHttpClient(config, transport=transport) as client:
+            with pytest.raises(ToolFailure, match="FETCH_TIMEOUT"):
+                await client.get("https://example.com/article")
+        assert stream.closed and not stream.writes
+
+    asyncio.run(run())
+
+
 def test_dns_timeout_and_fallback_connections():
     seen = []
 

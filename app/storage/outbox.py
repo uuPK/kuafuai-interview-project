@@ -51,13 +51,26 @@ def render_message(run, document):
         "",
     ]
     if not document.items:
-        lines.append("暂无符合订阅条件的新闻。")
+        lines.append(
+            "本次尚无可确认的主新闻，以下候选仍待核实。"
+            if document.unverified_items
+            else "暂无符合订阅条件的新闻。"
+        )
     for number, item in enumerate(document.items, 1):
         lines.extend(
-            [f"{number}. {item.title}", item.summary, f"入选理由：{item.selection_reason}"]
+            [
+                f"{number}. {item.title}",
+                *("信息说明：" + note for note in item.verification_notes),
+                item.summary,
+                f"入选理由：{item.selection_reason}",
+            ]
         )
         lines.extend(f"来源：{url}" for url in dict.fromkeys(c.url for c in item.citations))
         lines.append("")
+    if document.unverified_items:
+        lines.extend(["待核实信息（尚未确认，不计入主新闻条数）", ""])
+        for item in document.unverified_items:
+            lines.extend([item.title, "待核实原因：" + item.reason, "原文：" + item.url, ""])
     lines.extend(f"未覆盖话题：{item.topic}；{item.reason}" for item in document.uncovered_topics)
     if document.shortfall_reason:
         lines.append("条数说明：" + document.shortfall_reason)

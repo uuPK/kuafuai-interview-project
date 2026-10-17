@@ -356,9 +356,9 @@ class ConversationStore:
                     run_id,
                     "input_budget",
                     "budget_warning",
-                    "输入材料接近容量上限，请停止批量发现和无关读取，使用时间已确认的正文形成少量合格稿件。"
+                    "输入材料接近容量上限，请停止批量发现和无关读取，使用已有正文支持的事实形成合格稿件。"
                     "用完整preview及其起止位置，或search_content精确定位短quote；保留一次修订所需空间。"
-                    "不得使用usable_in_window=false的来源，不得估算引用位置。",
+                    "正文支持但缺少时间的内容可以标注后显示；事实存疑候选放unverified_items，不得估算引用位置。",
                 )
             if self.guards.close_to_limit(run, request_timeout):
                 remaining = {

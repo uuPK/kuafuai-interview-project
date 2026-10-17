@@ -257,9 +257,7 @@ def test_item_count_and_topic_coverage(brief_env, change):
     assert not ready.reviews and counts(ready) == (0, 0, 0)
 
 
-@pytest.mark.parametrize(
-    "status,delta", [("missing", 0), ("conflict", 0), ("confirmed", -25), ("confirmed", 1)]
-)
+@pytest.mark.parametrize("status,delta", [("confirmed", -25), ("confirmed", 1)])
 def test_source_date_must_be_confirmed_inside_window(brief_env, status, delta):
     ready = brief_env
     metadata(

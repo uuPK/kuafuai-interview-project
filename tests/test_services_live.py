@@ -185,8 +185,43 @@ def test_real_research_and_source_citations(topic):
                     report["human_review"] = "pending: review against saved full source snapshots"
                 save(config, report)
             assert done.status == "completed", f"{done.status}: {done.stop_reason}; report saved"
-            assert len(report["brief"]["document"]["items"]) == 1
+            document = report["brief"]["document"]
+            assert len(document["items"]) == 1
             assert report["brief"]["review_basis"] == "independent"
+            citations_checked, noted_items = 0, 0
+            for item in document["items"]:
+                noted_items += bool(item["verification_notes"])
+                for citation in item["citations"]:
+                    meta, _ = runtime.source_store.get_source(
+                        done.id, done.user_id, citation["source_id"]
+                    )
+                    raw = (config.data_dir / "runs" / done.id / meta.file_path).read_bytes()
+                    body = raw.decode("utf-8")
+                    assert hashlib.sha256(raw).hexdigest() == citation["content_hash"]
+                    start, end = citation["start_offset"], citation["end_offset"]
+                    assert 0 <= start < end <= len(body)
+                    assert body[start:end] == citation["quote"]
+                    assert citation["url"] == meta.url
+                    assert citation["publication_status"] == meta.publication.status
+                    if meta.publication.status == "confirmed":
+                        assert done.window_start <= meta.publication.published_at <= done.window_end
+                    else:
+                        assert meta.publication.status in {"missing", "ambiguous", "conflicting"}
+                        assert item["verification_notes"]
+                    citations_checked += 1
+            for item in document["unverified_items"]:
+                candidate = runtime.candidate_store.get_candidate(
+                    done.id, done.user_id, item["candidate_id"]
+                )
+                assert item["url"] == candidate.material.url and item["reason"].strip()
+            assert not any(call["tool"] == "read_feed" for call in report["calls"])
+            report["evidence_checks"] = {
+                "exact_citations": citations_checked,
+                "items_with_time_notes": noted_items,
+                "unverified_links": len(document["unverified_items"]),
+                "rss_calls": 0,
+            }
+            save(config, report)
 
     asyncio.run(scenario())
 

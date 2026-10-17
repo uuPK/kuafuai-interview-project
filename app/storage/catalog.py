@@ -139,5 +139,6 @@ class CatalogStore:
             value = self.brief(row["id"], owner)
             document = value.pop("document")
             value["title"], value["item_count"] = document["title"], len(document["items"])
+            value["unverified_count"] = len(document["unverified_items"])
             items.append(value)
         return {"items": items, "next_cursor": next_cursor}

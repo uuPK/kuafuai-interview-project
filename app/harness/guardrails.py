@@ -126,7 +126,8 @@ class GuardrailStore:
             ):
                 return ToolResult.failure(
                     "SUBMISSION_REQUIRED",
-                    "剩余预算已预留给提交、修订和独立核对，请据现有正文直接提交。",
+                    "剩余预算已预留给提交、修订和独立核对，请据现有正文直接提交。"
+                    "无法核实的条目移入unverified_items附后说明与原文链接，不再断言无依据细节。",
                 )
             streak = self.streak(connection, run_id)
             if (

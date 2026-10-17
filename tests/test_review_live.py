@@ -23,6 +23,7 @@ from app.agent.protocol import (
 from app.agent.runner import AgentRunner
 from app.config import Settings
 from app.harness.redaction import Redactor
+from app.providers.article import Publication
 from app.providers.deepseek import DeepSeekClient
 from app.storage.calls import CallStore
 from app.storage.conversations import ConversationStore
@@ -101,6 +102,7 @@ def report(env, name, **values):
         ("new_version", True),
         ("separate_sdk_event", True),
         ("source_instructions", True),
+        ("unconfirmed_time_context", True),
     ],
 )
 def test_live_independent_quality_review(scenario, approved):
@@ -113,6 +115,19 @@ def test_live_independent_quality_review(scenario, approved):
             review_world(env, client, injection=scenario == "source_instructions") as world,
         ):
             item = await draft_item(world)
+            if scenario == "unconfirmed_time_context":
+                citation = item["citations"][0]
+                source_id = citation["source_id"]
+                meta, _ = world.sources.get_source(env.run.id, env.run.user_id, source_id)
+                changed = meta.model_copy(update={"publication": Publication(status="ambiguous")})
+                with env.database.transaction() as connection:
+                    connection.execute(
+                        "UPDATE sources SET metadata_json=? WHERE id=?",
+                        (changed.model_dump_json(), source_id),
+                    )
+                start = citation["start_offset"] + citation["quote"].index("23%")
+                citation.update(start_offset=start, end_offset=start + 3, quote="23%")
+                item["summary"] = "据原文报道，" + item["summary"]
             if scenario == "unsupported_number":
                 item["summary"] = item["summary"].replace("23%", "99%")
                 item["key_facts"][-1] = item["key_facts"][-1].replace("23%", "99%")
