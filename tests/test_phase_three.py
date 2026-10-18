@@ -249,6 +249,10 @@ def test_failed_research_stops_with_paired_feedback_and_no_delivery(
             reviews = ReviewModel(reject(), reject())
         async with review_world(env, reviews) as world:
             value = draft(await draft_item(world))
+            if case == "revision_limit":
+                # Invalid citations retain the two-attempt stop; factual review rejection
+                # now has its separately tested unverified-only delivery path.
+                value["items"][0]["citations"][0]["quote"] = "[fixture] invalid quotation"
             if case == "model_budget":
                 # Prepare fixed evidence before tightening the budget for the recovery scenario.
                 with env.database.transaction() as connection:

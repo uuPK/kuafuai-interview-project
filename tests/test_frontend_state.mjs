@@ -62,6 +62,24 @@ test("pending-only briefs never claim there were no candidates", async () => {
   );
 });
 
+test("final rejected reviews show an explicit unverified delivery banner", async () => {
+  const value = brief("待核实原文线索");
+  value.document.review_status = "unverified";
+  value.document.unverified_items = [
+    {
+      title: "原文标题",
+      reason: "核对问题：数字冲突",
+      url: "https://example.com/source",
+    },
+  ];
+  const ui = harness(() => value);
+  await ui.run("showBrief('brief-A')");
+  const text = ui.get("brief-content").textContent;
+  assert.match(text, /最终事实核对仍有问题/);
+  assert.match(text, /未确认任何主新闻/);
+  assert.match(text, /数字冲突/);
+});
+
 test("late terminal task events cannot open its brief after selecting another task", async () => {
   const slowEvents = deferred();
   const ui = harness((path) => {

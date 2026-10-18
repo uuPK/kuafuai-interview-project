@@ -50,6 +50,8 @@ def render_message(run, document):
         f"新闻窗口：{timestamp(run.window_start)} 至 {timestamp(run.window_end)}",
         "",
     ]
+    if document.review_status == "unverified":
+        lines.append("最终事实核对仍有问题，本次仅交付待核实原文线索，未确认任何主新闻。")
     if not document.items:
         lines.append(
             "本次尚无可确认的主新闻，以下候选仍待核实。"

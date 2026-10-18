@@ -546,6 +546,20 @@ docs/delivery.md 提供交付入口、人工测试次序、配置重启方式、
 
 最终镜像重复网页预览 run_id=6772c52b 时，首次核对反馈包含未被context支持的具体细节，修订后又出现常用机构简称及等义表述误判，任务按两次上限停止。针对该反馈继续明确核对接受普通简称和等义复述，并在BRIEF_REVIEW_REJECTED返回每条主新闻的服务端候选编号及待核实调整指引；预算仅允许提交时也明确提示这条路径。新增替身完整轨迹验证：第一次事实核对拒绝，模型按候选编号移入待核实列表，第二次核对通过，保存原文链接，已交付事实历史仍为0。该轨迹与相关核对、提交、预算回归252 passed、73.56秒，报告 tests-pending-feedback-20261018.xml；未自动绕过独立核对或扩大提交次数。
 
-随后重复预览 run_id=d96ff70e 的两次提交分别因引文不一致、历史事实重复及数字口径问题被拒绝，最终仍为brief_revision_exhausted，见 browser-repeat-limit-20261018.json。现行两次上限下，第一轮用于纠正引用位置后，第二轮才发现事实问题时仍可能无法交付；该重复使用边界尚未解决，不能以五类独立研究成功宣称所有连续预览稳定通过。用户已收到最终交付规则调整建议，审核前保留现行停止行为。
+随后重复预览 run_id=d96ff70e 的两次提交分别因引文不一致、历史事实重复及数字口径问题被拒绝，最终仍为brief_revision_exhausted，见 browser-repeat-limit-20261018.json。当时的两次上限下，第一轮用于纠正引用位置后，第二轮才发现事实问题时仍可能无法交付；不能以五类独立研究成功宣称所有连续预览稳定通过。当时待审核的最终交付调整已在本轮获用户批准，实现与复验见下节；这份旧失败记录保持不变。
 
 代码冻结后的最终完整验收为1420 passed、28 skipped，331.09秒，覆盖率95.93%，Node前端18 passed，Ruff与格式通过，报告 verify-display-policy-delivery-20261018.log、final-regression/tests.xml/coverage.json。28项跳过为22项显式真实服务、4项旧轨迹重放和2项Windows符号链接权限；真实Docker、Compose及恢复用例已包含在1420项内。最终镜像sha256:55869861f25693e865c9a1d5bd309e6992e1798dab4f50167a4c6b5068d641a3，API/Worker均healthy，主页/健康/JS/CSS/图标全部200，本轮15个应用文件与运行容器逐一一致，见 final-display-instance-20261018.json。184个已跟踪文件、5项本地配置敏感值扫描无匹配或禁止文件；.env、数据库、原始协议和验收运行材料继续忽略。README和用户现有AGENTS.md改动保留。
+
+## 2026-10-18 最终事实拒绝后的待核实交付
+
+用户已明确同意调整，实施计划与实现同步更新。第二次提交取得完整有效的事实拒绝结果后，服务端从本任务来源构造最多5个去重原文线索，保留原文标题、对应核对问题和原文链接，标记 review_status=unverified。整份稿件主新闻为0，被拒绝的摘要和关键事实不进入交付文档或已确认事实历史；页面与固定邮件明确提示未确认任何主新闻。权限、引用位置/摘录不一致、损坏来源、输入不足、服务、鉴权及协议故障继续停止。两次提交与模型预算保持原上限。
+
+原始草稿继续与模型调用绑定；提交意图额外固定最终拒绝问题及待核实文档，恢复时重新核查原来源哈希、拒绝响应和链接，复用同一简报与邮件记录，不额外请求模型。tests/test_unverified_fallback.py 新增15项回归，覆盖连续两次拒绝、先修引用再被事实拒绝、精确历史事实重复、固定邮件、中断恢复唯一性、损坏证据与服务/输入错误边界。相关提交、核对、页面、邮件与恢复回归242 passed、86.07秒，报告 tests-unverified-fallback-20261018.xml。
+
+真实DeepSeek固定材料验收 test_live_second_rejection_delivers_only_unverified_source_links 为1 passed、11 deselected、4.13秒，报告 tests-unverified-review-live-20261018.xml。刻意将明确标为测试材料的23%改为99%，两次独立核对拒绝后保存1条待核实原文，确认历史0、模型请求2，未发送邮件。逐项报告 review-live-2026-10-18/final-unverified/9172213bb8c34a52a38c7d81685408ca/report.json；该用例验证真实模型协议与交付路径，不充作真实新闻质量验收。
+
+最新镜像下，原 ai agent 订阅、上限5的真实网页预览 run_id=e6fd3980-4b87-44eb-8879-1e802da23d3b 正常完成。先检索补充材料，首次核对指出历史重复，修订后第二次仍指出重复事实及日期未经确认，最终交付5条待核实原文线索。任务 completed，文档 review_status=unverified，主新闻0、确认事实历史0；6次搜索、12次抓取、4次正文定位、1次进度更新、2次提交，RSS调用0。只读核验全部候选标题/链接、原始草稿绑定、最终拒绝问题、来源SHA256及8处引文切片一致，预览邮件0。刷新页面后从历史重新打开，提示、原因和5条链接均保留。记录 browser-unverified-delivery-20261018.json；截图 unverified-delivery-ui-20261018.jpg 与 unverified-reason-ui-20261018.jpg 展示明确提示、具体核对问题和原文链接。391像素窄屏无横向溢出，控制台无错误。
+
+代码冻结后的完整 scripts/verify.py --docker 回归1435 passed、29 skipped、345.44秒，覆盖率95.79%；Node前端19 passed，Ruff与格式通过，报告 verify-unverified-delivery-20261018.log、final-regression/tests.xml/coverage.json。29项跳过为23项显式真实服务、4项旧轨迹重放和2项Windows符号链接权限；真实Docker、Compose及恢复用例已包含在1435项内。最终镜像sha256:504098916451c97590dd3efd9ceb22e3adc93863564cca7eca02b6d3e1827d63，默认API/Worker均healthy，主页/健康/JS/CSS/图标全部200，本轮7个应用文件与运行容器逐一一致，见 final-unverified-instance-20261018.json。保留用户数据卷、旧任务与历史；QQ/Gmail实际收件沿用既有确认，未重复发信。用户对新闻事实与选题的最终人工审阅、公网Linux域名HTTPS继续按既有交付边界单独验收。
+
+交付扫描186个已跟踪文件、5项本地配置敏感值，密钥匹配与禁止文件均为0，报告 delivery-secret-scan.json。凭据、数据库、原始协议、验收材料继续被Git忽略；README、用户现有AGENTS.md和其他无关未跟踪文件未纳入本次提交。

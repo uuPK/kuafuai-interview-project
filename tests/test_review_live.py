@@ -198,6 +198,48 @@ def test_live_independent_quality_review(scenario, approved):
     asyncio.run(run())
 
 
+def test_live_second_rejection_delivers_only_unverified_source_links():
+    async def run():
+        env = environment("final-unverified")
+        before = time.monotonic()
+        async with DeepSeekClient(env.settings) as client, review_world(env, client) as world:
+            item = await draft_item(world)
+            item["summary"] = item["summary"].replace("23%", "99%")
+            item["key_facts"][-1] = item["key_facts"][-1].replace("23%", "99%")
+            proposed = draft(item)
+            first = await world.executor.execute(
+                env.run.id, env.run.user_id, invocation(proposed, "a")
+            )
+            result = await world.executor.execute(
+                env.run.id, env.run.user_id, invocation(proposed, "b")
+            )
+            document = (
+                world.briefs.get(result.data["brief_id"], env.run.user_id)["document"]
+                if result.ok
+                else None
+            )
+            with env.database.connection() as connection:
+                history = connection.execute("SELECT COUNT(*) FROM delivered_history").fetchone()[0]
+            report(
+                env,
+                "final-unverified",
+                first=first.model_dump(mode="json"),
+                result=result.model_dump(mode="json"),
+                document=document.model_dump(mode="json") if document else None,
+                delivered_history=history,
+                budget_usage=env.runs.get_run(
+                    env.run.id, env.run.user_id
+                ).budget_usage.model_dump(),
+                elapsed_seconds=round(time.monotonic() - before, 3),
+            )
+            assert first.error.code == "BRIEF_REVIEW_REJECTED"
+            assert result.ok and document.review_status == "unverified"
+            assert not document.items and document.unverified_items and history == 0
+            assert env.runs.get_run(env.run.id, env.run.user_id).budget_usage.model_requests == 2
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("correction", ["number", "range"])
 def test_live_research_model_corrects_review_feedback_then_submits(correction):
     async def run():

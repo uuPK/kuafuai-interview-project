@@ -14,7 +14,7 @@ class SubmissionTool:
     async def submit(self, context, parameters):
         if context.tool_call_id is None:
             raise PermissionError("submission requires a server-bound call")
-        self.store.check_attempt(context)
+        attempt = self.store.check_attempt(context)
         prepared = self.store.prepared(context, parameters.draft)
         if prepared is not None:
             return prepared
@@ -31,6 +31,19 @@ class SubmissionTool:
             await self.reviewer(context, parameters.draft, checked)
         )
         if not outcome.approved:
+            if attempt == 2:
+                fallback = self.store.unverified_document(
+                    context, parameters.draft, checked, outcome.issues
+                )
+                if fallback is not None:
+                    return self.store.stage(
+                        context,
+                        parameters.draft,
+                        checked,
+                        self.review_basis,
+                        fallback_document=fallback,
+                        review_issues=outcome.issues,
+                    )
             candidates = {source.source_id: source.candidate_id for source in checked.sources}
             mapping = "；".join(
                 f"第{i + 1}条={candidates[item.citations[0].source_id]}"
@@ -64,7 +77,8 @@ def register_submission(registry, store, *, reviewer=None, review_basis="indepen
             "单独附后并生成原文链接，不计主新闻条数；在预算内先补查以尽量补齐条数。"
             "每个话题须有入选条目或uncovered_topics中的topic/reason；条数不足时提供shortfall_reason。"
             "空简报须先有有效搜索/RSS结果，依赖或材料失败不能当作无新闻。"
-            "服务端检查归属、时间、哈希和排除词并生成链接；独立核对通过才保存。",
+            "服务端检查归属、时间、哈希和排除词并生成链接；主新闻须独立核对通过。"
+            "第二次事实核对仍拒绝时，仅保存明确标注的待核实原文线索，不发布被拒绝的摘要与事实。",
             SubmitParameters,
             tool.submit,
             completion_status=submission_completion,

@@ -1,6 +1,7 @@
 """Durable checked intent, followed by atomic brief, history, result and feedback."""
 
 import json
+from dataclasses import replace
 from typing import Literal
 from uuid import uuid4
 
@@ -8,13 +9,14 @@ from pydantic import Field
 
 from app.agent.briefs import BriefDocument, BriefDraft, PublishedUnverifiedItem, SubmitParameters
 from app.agent.research import HistoryEvent
+from app.agent.unverified import unverified_draft
 from app.harness.failures import FATAL_CATEGORIES, FailureInfo
 from app.storage.models import StateChange, StoredModel, timestamp
 from app.storage.outbox import OutboxStore
 from app.storage.runs import _record
 from app.storage.snapshots import SourceMetadata
 from app.tools.context import bind_context
-from app.tools.models import ToolFailure, ToolInvocation, ToolResult
+from app.tools.models import ArgumentIssue, ToolFailure, ToolInvocation, ToolResult
 
 
 class SubmissionJob(StoredModel):
@@ -27,6 +29,8 @@ class SubmissionJob(StoredModel):
     sources: tuple[SourceMetadata, ...] = Field(max_length=50)
     duplicate_hints: tuple[dict, ...] = Field(max_length=100)
     unverified_items: tuple[PublishedUnverifiedItem, ...] = Field(default=(), max_length=5)
+    fallback_document: BriefDocument | None = None
+    review_issues: tuple[ArgumentIssue, ...] = Field(default=(), max_length=10)
 
     @property
     def result(self):
@@ -38,6 +42,7 @@ class SubmissionJob(StoredModel):
                 if self.draft.items or self.draft.unverified_items
                 else "no_news",
                 "review_basis": self.review_basis,
+                **({"review_status": "unverified"} if self.fallback_document else {}),
             }
         )
 
@@ -67,6 +72,7 @@ class BriefStore:
             count = self._attempts(connection, context.run_id)
             if count > 2:
                 raise ToolFailure("BRIEF_SUBMISSION_LIMIT", "已达到两次提交上限，无法继续核对。")
+            return count
 
     @staticmethod
     def _attempts(connection, run_id):
@@ -105,7 +111,58 @@ class BriefStore:
             or checked.document.unverified_items != job.unverified_items
         ):
             self._problem()
+        if job.fallback_document is not None:
+            document = self.unverified_document(context, job.draft, checked, job.review_issues)
+            if document is None or document != job.fallback_document:
+                self._problem()
+            checked = replace(checked, document=document)
+        elif job.review_issues:
+            self._problem()
         return checked
+
+    def unverified_document(self, context, draft, checked, issues):
+        # Accept a complete negative model review or the owned exact-history fact check.
+        # Capacity, unsafe input, service and protocol failures retain their error path.
+        from app.agent.protocol import ModelResponse
+        from app.agent.review import ReviewInput, ReviewInputProblem, parse_review
+
+        with self.database.connection() as connection:
+            self.runs._owned_row(connection, context.run_id, context.user_id)
+            if self._attempts(connection, context.run_id) != 2:
+                return None
+            row = connection.execute(
+                "SELECT response_json FROM brief_reviews WHERE run_id=? AND tool_call_id=?",
+                (context.run_id, context.tool_call_id),
+            ).fetchone()
+        if row is None:
+            reviewer = ReviewInput(self.research, self.rules.sources, self.rules.settings)
+            try:
+                history = reviewer.related_history(context, draft)
+            except ReviewInputProblem:
+                return None
+            try:
+                reviewer.unchanged_facts(draft, history)
+            except ReviewInputProblem as problem:
+                outcome = problem.outcome
+            else:
+                return None
+        else:
+            if row[0] is None:
+                return None
+            try:
+                outcome = parse_review(ModelResponse.model_validate_json(row[0]), draft)
+            except (ValueError, ToolFailure):
+                self._problem()
+        if outcome.approved or outcome.issues != tuple(issues):
+            self._problem()
+        run = self.runs.get_run(context.run_id, context.user_id)
+        proposed = unverified_draft(draft, checked, issues, run.subscription.topics)
+        if proposed is None:
+            return None
+        pending, rejected = self.rules.check(context, proposed)
+        if rejected is not None:
+            return None
+        return BriefDocument(**{**pending.document.model_dump(), "review_status": "unverified"})
 
     def prepared(self, context, draft):
         with self.database.connection() as connection:
@@ -123,7 +180,9 @@ class BriefStore:
         self._validate(context, job)
         return job.result
 
-    def stage(self, context, draft, checked, review_basis):
+    def stage(
+        self, context, draft, checked, review_basis, *, fallback_document=None, review_issues=()
+    ):
         call = self.calls.get_call(context.run_id, context.user_id, context.tool_call_id)
         if call.status != "executing" or call.name != "submit_brief":
             raise PermissionError("submission intent requires an executing server-bound call")
@@ -137,6 +196,8 @@ class BriefStore:
             duplicate_hints=checked.duplicate_hints,
             unverified_items=checked.document.unverified_items,
             review_basis=review_basis,
+            fallback_document=fallback_document,
+            review_issues=review_issues,
         )
         if len(job.result.model_dump_json()) > self.rules.settings.max_tool_result_chars:
             raise ToolFailure("RESULT_TOO_LARGE", "提交确认无法容纳，请检查结果大小配置。")
@@ -155,6 +216,8 @@ class BriefStore:
                     or saved.sources != checked.sources
                     or saved.review_basis != review_basis
                     or saved.unverified_items != checked.document.unverified_items
+                    or saved.fallback_document != fallback_document
+                    or saved.review_issues != tuple(review_issues)
                 ):
                     self._problem()
                 return saved.result
@@ -242,7 +305,7 @@ class BriefStore:
                 checked.document.model_dump_json(),
             ),
         )
-        if job.draft.items:
+        if checked.document.items:
             events = tuple(
                 HistoryEvent.model_validate_json(
                     json.dumps(
@@ -266,14 +329,17 @@ class BriefStore:
             {
                 "tool_call_id": call.tool_call_id,
                 "brief_id": job.brief_id,
-                "item_count": len(job.draft.items),
+                "item_count": len(checked.document.items),
                 "review_basis": job.review_basis,
                 "duplicate_hints": list(checked.duplicate_hints),
                 "items": [
                     {"title": item.title, "selection_reason": item.selection_reason}
-                    for item in job.draft.items
+                    for item in checked.document.items
                 ],
-                "basis": "model_reported",
+                "basis": "server_unverified_fallback"
+                if job.fallback_document
+                else "model_reported",
+                "review_status": checked.document.review_status,
             },
         )
 

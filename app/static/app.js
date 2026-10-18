@@ -497,6 +497,14 @@ async function showBrief(id) {
     `${localTime(b.created_at)} · ${b.mode === "scheduled" ? "每日订阅" : "预览"}${b.review_basis === "fixture" ? " · 测试材料与核对" : ""}`;
   const content = $("brief-content");
   content.replaceChildren();
+  if (b.document.review_status === "unverified")
+    content.append(
+      node(
+        "p",
+        "最终事实核对仍有问题，本次仅交付待核实原文线索，未确认任何主新闻。",
+        "verification-note",
+      ),
+    );
   if (!b.document.items.length)
     content.append(
       node(

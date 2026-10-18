@@ -88,6 +88,13 @@ class PublishedUnverifiedItem(UnverifiedItem):
 class BriefDocument(BriefDraft):
     items: tuple[PublishedItem, ...] = Field(max_length=5)
     unverified_items: tuple[PublishedUnverifiedItem, ...] = Field(default=(), max_length=5)
+    review_status: Literal["approved", "unverified"] = "approved"
+
+    @model_validator(mode="after")
+    def require_unverified_only(self):
+        if self.review_status == "unverified" and (self.items or not self.unverified_items):
+            raise ValueError("unverified review may deliver only nonempty original-source leads")
+        return self
 
 
 class ReviewOutcome(ToolParameters):
