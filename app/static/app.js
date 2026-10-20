@@ -60,6 +60,22 @@ export function localTime(value) {
         hour12: false,
       }).format(d);
 }
+export function dayKey(value) {
+  const date = new Date(value);
+  return !value || Number.isNaN(date.valueOf())
+    ? null
+    : new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Shanghai",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(date);
+}
+export function editionNote(value, now = new Date().toISOString()) {
+  return dayKey(value) === dayKey(now)
+    ? ""
+    : `今日尚未生成，以下为最近一期 · ${localTime(value)}`;
+}
 export function messageFor(code) {
   return errors[code] || "操作未完成，请稍后重试。";
 }
@@ -128,6 +144,7 @@ function node(tag, text, cls) {
 }
 const state = {
   page: "today",
+  latestBrief: null,
   user: null,
   csrf: null,
   epoch: 0,
@@ -185,6 +202,9 @@ function reset(user = null) {
   state.briefView++;
   state.user = user;
   state.run = null;
+  state.latestBrief = null;
+  $("today-empty").hidden = false;
+  $("edition-note").textContent = "";
   state.after = 0;
   state.eventPage = null;
   state.eventIDs.clear();
@@ -303,6 +323,15 @@ async function loadDashboard() {
     loadList("runs", true),
     loadList("briefs", true),
   ]);
+  if (state.page === "today") await showLatest();
+}
+async function showLatest() {
+  if (!state.latestBrief) {
+    $("today-empty").hidden = false;
+    $("brief-panel").hidden = true;
+    return;
+  }
+  await showBrief(state.latestBrief.brief_id);
 }
 async function loadSubscription() {
   const { subscription: s } = await request("/subscription");
@@ -311,6 +340,7 @@ async function loadSubscription() {
     return;
   }
   const f = $("subscription-form").elements;
+  $("topic-summary").textContent = s.topics.join(" / ");
   for (const key of ["topics", "keywords", "exclude_keywords"])
     f[key].value = s[key].join("\n");
   f.max_items.value = s.max_items;
@@ -342,6 +372,7 @@ async function loadList(kind, fresh = false) {
       (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""),
   );
   if (version !== state.listView[kind]) return;
+  if (kind === "briefs" && fresh) state.latestBrief = data.items[0] || null;
   $(kind).querySelector(".empty")?.remove();
   for (const item of data.items) {
     const id = item.id || item.brief_id;
@@ -509,16 +540,56 @@ function citation(c) {
   box.append(node("blockquote", c.quote));
   return box;
 }
+function readingItem(item, index) {
+  const article = node("section", undefined, "news-item");
+  article.append(
+    node("span", String(index + 1).padStart(2, "0"), "news-number"),
+    node("h3", item.title),
+  );
+  const topics = node("div", undefined, "news-topics");
+  for (const topic of item.topics || []) topics.append(node("span", topic));
+  if (topics.childNodes.length) article.append(topics);
+  for (const note of item.verification_notes || [])
+    article.append(node("p", "信息说明：" + note, "verification-note"));
+  article.append(node("p", item.summary, "news-summary"));
+  const links = node("div", undefined, "source-links");
+  const seen = new Set();
+  for (const c of item.citations) {
+    const href = safeURL(c.url);
+    if (!href || seen.has(href)) continue;
+    seen.add(href);
+    const a = node("a", new URL(href).hostname.replace(/^www\./u, "") + " ↗");
+    a.href = href;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.setAttribute("aria-label", "查看原文：" + new URL(href).hostname);
+    links.append(a);
+  }
+  if (links.childNodes.length) article.append(links);
+  const evidence = node("details", undefined, "evidence");
+  evidence.append(node("summary", "查看引用依据"));
+  if (item.selection_reason)
+    evidence.append(node("p", "选题说明：" + item.selection_reason));
+  for (const c of item.citations) evidence.append(citation(c));
+  article.append(evidence);
+  return article;
+}
 async function showBrief(id) {
   const view = ++state.briefView;
   clearTimeout(state.mailTimer);
   const b = await request("/briefs/" + encodeURIComponent(id));
   if (view !== state.briefView) return;
   $("brief-panel").hidden = false;
+  $("today-empty").hidden = true;
+  $("edition-note").textContent =
+    state.page === "today" ? editionNote(b.created_at) : "";
   $("brief-title").textContent = b.document.title;
   $("brief-meta").textContent =
     `${localTime(b.created_at)} · ${b.mode === "scheduled" ? "每日订阅" : "预览"}${b.review_basis === "fixture" ? " · 测试材料与核对" : ""}`;
   const content = $("brief-content");
+  $("brief-count").textContent =
+    `${b.document.items.length} 条新闻${b.document.unverified_items?.length ? ` · ${b.document.unverified_items.length} 条待核实` : ""}`;
+  $("preview").textContent = "重新生成 ↗";
   content.replaceChildren();
   if (b.document.review_status === "unverified")
     content.append(
@@ -538,16 +609,7 @@ async function showBrief(id) {
       ),
     );
   for (const [index, item] of b.document.items.entries()) {
-    const article = node("section", undefined, "news-item");
-    article.append(node("h3", `${index + 1}. ${item.title}`));
-    for (const note of item.verification_notes || [])
-      article.append(node("p", "信息说明：" + note, "verification-note"));
-    article.append(
-      node("p", item.summary),
-      node("p", "入选理由：" + item.selection_reason, "muted"),
-    );
-    for (const c of item.citations) article.append(citation(c));
-    content.append(article);
+    content.append(readingItem(item, index));
   }
   if (b.document.unverified_items?.length) {
     const section = node("section", undefined, "unverified-items");
@@ -579,11 +641,11 @@ async function showBrief(id) {
   }
   for (const item of b.document.uncovered_topics)
     content.append(
-      node("p", `未覆盖话题：${item.topic}；${item.reason}`, "muted"),
+      node("p", `未覆盖话题：${item.topic}；${item.reason}`, "coverage-note"),
     );
   if (b.document.shortfall_reason)
     content.append(
-      node("p", "条数说明：" + b.document.shortfall_reason, "muted"),
+      node("p", "条数说明：" + b.document.shortfall_reason, "coverage-note"),
     );
   $("mail-panel").replaceChildren();
   await mailStatus(id, b.mode, view);
@@ -692,6 +754,7 @@ async function boot() {
     if (!state.user || window.location.hash === "#main") return;
     const page = window.location.hash.slice(1);
     setPage(page === "account" ? "settings" : page);
+    if (state.page === "today") action($("preview"), () => showLatest());
     if (page === "account")
       $("account-section").scrollIntoView({ block: "start" });
   });

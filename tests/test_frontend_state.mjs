@@ -77,6 +77,44 @@ test("pending-only briefs never claim there were no candidates", async () => {
   );
 });
 
+test("news reading keeps warnings visible while evidence is collapsed and original links deduplicate", () => {
+  const ui = harness(() => emptyPage);
+  const article = ui.run(
+    `readingItem({title:'<img onerror=alert(1)>标题',topics:['AI'],summary:'摘要',selection_reason:'偏好相关',verification_notes:['时间未确认'],citations:[{url:'https://example.com/a',quote:'第一段'},{url:'https://example.com/a',quote:'第二段'},{url:'javascript:alert(1)',quote:'无效链接'}]},0)`,
+  );
+  assert.equal(article.children[1].textContent, "<img onerror=alert(1)>标题");
+  assert.equal(
+    article.children.find((x) => x.className === "verification-note")
+      .textContent,
+    "信息说明：时间未确认",
+  );
+  assert.equal(
+    article.children.find((x) => x.className === "source-links").children
+      .length,
+    1,
+  );
+  const evidence = article.children.at(-1);
+  assert.equal(evidence.tagName, "details");
+  assert.equal(evidence.open, undefined);
+  assert.match(evidence.textContent, /第一段.*第二段.*来源链接无效/);
+});
+
+test("the latest saved edition opens on arrival and an empty account receives an honest first-edition state", async () => {
+  const ui = harness((path) =>
+    path.startsWith("/briefs/")
+      ? { ...brief("最近一期"), created_at: "2026-10-18T01:00:00Z" }
+      : emptyPage,
+  );
+  ui.run("state.latestBrief={brief_id:'brief-A'}");
+  await ui.run("showLatest()");
+  assert.equal(ui.get("today-empty").hidden, true);
+  assert.match(ui.get("edition-note").textContent, /今日尚未生成/);
+  ui.run('reset({id:"reader"})');
+  await ui.run("showLatest()");
+  assert.equal(ui.get("today-empty").hidden, false);
+  assert.equal(ui.get("brief-panel").hidden, true);
+});
+
 test("final rejected reviews show an explicit unverified delivery banner", async () => {
   const value = brief("待核实原文线索");
   value.document.review_status = "unverified";

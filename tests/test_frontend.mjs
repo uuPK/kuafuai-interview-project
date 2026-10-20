@@ -12,6 +12,8 @@ const {
   messageFor,
   mailText,
   runFailureText,
+  dayKey,
+  editionNote,
 } = await import(
   "data:text/javascript;base64," + Buffer.from(code).toString("base64")
 );
@@ -41,6 +43,15 @@ test("dates consistently use Beijing and invalid dates are explicit", () => {
   assert.match(localTime("2026-10-15T01:00:00Z"), /09:00/);
   assert.equal(localTime("bad"), "时间未知");
   assert.equal(localTime(null), "—");
+});
+test("today labels use Beijing dates and never present a previous edition as today's news", () => {
+  assert.equal(dayKey("2026-10-19T17:00:00Z"), "2026-10-20");
+  assert.equal(dayKey(null), null);
+  assert.equal(editionNote("2026-10-19T17:00:00Z", "2026-10-20T08:00:00Z"), "");
+  assert.match(
+    editionNote("2026-10-18T01:00:00Z", "2026-10-20T08:00:00Z"),
+    /今日尚未生成/,
+  );
 });
 test("unknown server codes never become raw UI text", () => {
   assert.equal(messageFor("raw secret <script>"), "操作未完成，请稍后重试。");
