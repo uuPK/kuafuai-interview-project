@@ -76,6 +76,31 @@ export function editionNote(value, now = new Date().toISOString()) {
     ? ""
     : `今日尚未生成，以下为最近一期 · ${localTime(value)}`;
 }
+export function parseRoute(hash) {
+  if (["#settings", "#account"].includes(hash))
+    return { page: "settings", account: hash === "#account" };
+  if (hash === "#history") return { page: "history" };
+  if (hash.startsWith("#brief/")) {
+    try {
+      const id = decodeURIComponent(hash.slice(7));
+      if (/^[a-zA-Z0-9_-]{1,128}$/u.test(id)) return { page: "detail", id };
+    } catch {
+      /* Malformed navigation falls back to the daily reading page. */
+    }
+  }
+  return { page: "today" };
+}
+export function subscriptionPayload(form) {
+  const f = form.elements;
+  return {
+    topics: splitValues(f.topics.value),
+    keywords: splitValues(f.keywords.value),
+    exclude_keywords: splitValues(f.exclude_keywords.value),
+    max_items: Number(f.max_items.value),
+    enabled: f.enabled.checked,
+    push_time: f.push_time.value,
+  };
+}
 export function messageFor(code) {
   return errors[code] || "操作未完成，请稍后重试。";
 }
@@ -143,6 +168,12 @@ function node(tag, text, cls) {
 }
 const state = {
   page: "today",
+  navigationView: 0,
+  historyScroll: 0,
+  selectedArchive: null,
+  archiveLoaded: false,
+  archiveDate: null,
+  listRequest: null,
   latestBrief: null,
   generating: false,
   readyBrief: null,
@@ -154,12 +185,12 @@ const state = {
   run: null,
   view: 0,
   briefView: 0,
-  listView: { runs: 0, briefs: 0 },
+  listView: { briefs: 0 },
   timer: null,
   mailTimer: null,
   pollingView: null,
-  cursors: { runs: null, briefs: null },
-  ids: { runs: new Set(), briefs: new Set() },
+  cursors: { briefs: null },
+  ids: { briefs: new Set() },
 };
 function notice(text, error = false) {
   $("notice").textContent = text;
@@ -170,17 +201,25 @@ function cancelPoll() {
   state.timer = null;
 }
 function setPage(page) {
-  state.page = ["today", "history", "settings"].includes(page) ? page : "today";
+  state.navigationView++;
+  state.briefView++;
+  clearTimeout(state.mailTimer);
+  state.page = ["today", "history", "settings", "detail"].includes(page)
+    ? page
+    : "today";
   for (const name of ["today", "history", "settings"]) {
     $(name + "-view").hidden = name !== state.page;
     $("nav-" + name).setAttribute(
       "aria-current",
-      name === state.page ? "page" : "false",
+      name === state.page || (name === "history" && state.page === "detail")
+        ? "page"
+        : "false",
     );
   }
   $("account-bar").open = false;
-  $("brief-panel").hidden =
-    state.page !== "today" || !$("brief-title").textContent;
+  $("brief-panel").hidden = true;
+  $("reading-status").hidden = true;
+  $("back-history").hidden = state.page !== "detail";
   $("today-date").textContent = new Intl.DateTimeFormat("zh-CN", {
     timeZone: "Asia/Shanghai",
     year: "numeric",
@@ -188,6 +227,51 @@ function setPage(page) {
     day: "numeric",
     weekday: "long",
   }).format(new Date());
+}
+function navigate(hash) {
+  if (typeof window === "undefined") return route(hash);
+  if (window.location.hash === hash) return route(hash);
+  window.location.hash = hash;
+}
+async function route(
+  hash = typeof window === "undefined" ? "#today" : window.location.hash,
+) {
+  if (!state.user || hash === "#main") return;
+  const target = parseRoute(hash);
+  if (state.page === "history" && typeof window !== "undefined")
+    state.historyScroll = window.scrollY;
+  setPage(target.page);
+  const version = state.navigationView;
+  notice("");
+  try {
+    if (target.page === "today") await showLatest();
+    if (target.page === "detail") {
+      state.selectedArchive = target.id;
+      await showBrief(target.id);
+    }
+    if (target.page === "history" && !state.archiveLoaded)
+      await loadList("briefs", true);
+    if (version !== state.navigationView || !state.user) return;
+    if (typeof window !== "undefined") {
+      window.scrollTo({
+        top: target.page === "history" ? state.historyScroll : 0,
+        behavior: "instant",
+      });
+      if (target.page === "history" && state.selectedArchive)
+        $("archive-" + state.selectedArchive)?.focus({ preventScroll: true });
+      if (target.page === "detail")
+        $("brief-title").focus({ preventScroll: true });
+      if (target.account) {
+        $("account-section").scrollIntoView({ block: "start" });
+        $("profile-form").elements.nickname.focus({ preventScroll: true });
+      }
+    }
+  } catch (e) {
+    if (e.name === "AbortError" || version !== state.navigationView) return;
+    $("reading-status").hidden = false;
+    $("reading-message").textContent = e.message;
+    $("retry-reading").hidden = false;
+  }
 }
 function reset(user = null) {
   cancelPoll();
@@ -209,8 +293,18 @@ function reset(user = null) {
   $("today-empty").hidden = false;
   $("edition-note").textContent = "";
   state.pollingView = null;
-  state.ids = { runs: new Set(), briefs: new Set() };
-  state.cursors = { runs: null, briefs: null };
+  state.ids = { briefs: new Set() };
+  state.cursors = { briefs: null };
+  state.listView.briefs++;
+  state.listRequest = null;
+  state.archiveLoaded = false;
+  state.archiveDate = null;
+  state.historyScroll = 0;
+  state.selectedArchive = null;
+  $("more-briefs").hidden = true;
+  $("topic-summary").textContent = "为你关注的话题整理";
+  $("subscription-draft").textContent = "";
+  $("profile-draft").textContent = "";
   for (const id of ["briefs", "brief-content", "mail-panel"])
     $(id).replaceChildren();
   $("brief-panel").hidden = true;
@@ -304,17 +398,23 @@ async function action(button, fn) {
   }
 }
 async function loadDashboard() {
-  await Promise.all([
+  const results = await Promise.allSettled([
     loadSubscription(),
     loadList("briefs", true),
     restoreGeneration(),
   ]);
-  if (state.page === "today") await showLatest();
+  if (!state.user) return;
+  await route();
+  for (const result of results)
+    if (result.status === "rejected" && result.reason.name !== "AbortError")
+      notice(result.reason.message, true);
 }
 async function showLatest() {
   if (!state.latestBrief) {
     $("today-empty").hidden = false;
     $("brief-panel").hidden = true;
+    $("edition-note").textContent = "";
+    updateGenerateButton();
     return;
   }
   await showBrief(state.latestBrief.brief_id);
@@ -343,59 +443,68 @@ async function loadSubscription() {
       `；曾错过 ${summary.last_notice.missed_count} 次计划，已记录。`;
 }
 async function loadList(kind, fresh = false) {
-  if (fresh) {
-    state.listView[kind]++;
-    state.cursors[kind] = null;
-    state.ids[kind].clear();
-    $(kind).replaceChildren();
-  }
+  if (kind !== "briefs") throw new Error("不支持的简报列表。");
+  if (!fresh && state.listRequest) return;
+  if (fresh) state.listView[kind]++;
   const version = state.listView[kind];
-  const cursor = state.cursors[kind];
-  const data = await request(
-    "/" +
-      kind +
-      "?limit=10" +
-      (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""),
-  );
-  if (version !== state.listView[kind]) return;
-  if (kind === "briefs" && fresh) state.latestBrief = data.items[0] || null;
-  $(kind).querySelector(".empty")?.remove();
-  for (const item of data.items) {
-    const id = item.id || item.brief_id;
-    if (state.ids[kind].has(id)) continue;
-    state.ids[kind].add(id);
-    const row = node("div", undefined, "row");
-    const button = node(
-      "button",
-      kind === "runs"
-        ? `${item.mode === "scheduled" ? "每日订阅" : "预览"} · ${localTime(item.created_at)}`
-        : item.title,
-      "quiet",
+  const cursor = fresh ? null : state.cursors[kind];
+  const ticket = { version, cursor };
+  state.listRequest = ticket;
+  try {
+    const data = await request(
+      "/" +
+        kind +
+        "?limit=10" +
+        (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""),
     );
-    button.type = "button";
-    button.append(
-      node(
-        "small",
-        kind === "runs"
-          ? `任务 ${id.slice(0, 8)}`
-          : `${localTime(item.created_at)} · ${item.item_count} 条${item.unverified_count ? ` · ${item.unverified_count} 条待核实` : ""}${item.review_basis === "fixture" ? " · 测试材料" : ""}`,
-      ),
-    );
-    button.addEventListener("click", () =>
-      action(button, () => (kind === "runs" ? selectRun(id) : showBrief(id))),
-    );
-    row.append(
-      button,
-      node("span", labels[item.status] || item.status, "badge"),
-    );
-    $(kind).append(row);
+    if (version !== state.listView[kind]) return;
+    if (fresh) {
+      state.cursors[kind] = null;
+      state.ids[kind].clear();
+      state.archiveDate = null;
+      $(kind).replaceChildren();
+      state.latestBrief = data.items[0] || null;
+      updateGenerateButton();
+    }
+    state.archiveLoaded = true;
+    $(kind).querySelector(".empty")?.remove();
+    for (const item of data.items) {
+      const id = item.brief_id;
+      if (state.ids[kind].has(id)) continue;
+      state.ids[kind].add(id);
+      const date = dayKey(item.created_at) || "日期未记录";
+      if (date !== state.archiveDate) {
+        $(kind).append(node("h2", date.replaceAll("-", " / "), "archive-date"));
+        state.archiveDate = date;
+      }
+      const row = node("div", undefined, "row");
+      const button = node("a", item.title, "archive-link");
+      button.href = "#brief/" + encodeURIComponent(id);
+      button.id = "archive-" + id;
+      button.append(
+        node(
+          "small",
+          `${localTime(item.created_at)} · ${item.item_count} 条新闻${item.unverified_count ? ` · ${item.unverified_count} 条待核实` : ""}${item.review_basis === "fixture" ? " · 测试材料" : ""}`,
+        ),
+      );
+      button.addEventListener("click", () => {
+        state.selectedArchive = id;
+      });
+      row.append(
+        button,
+        node("span", item.mode === "scheduled" ? "每日订阅" : "预览", "badge"),
+      );
+      $(kind).append(row);
+    }
+    if (!state.ids[kind].size)
+      $(kind).append(
+        node("p", "还没有历史简报，生成第一期后会保存在这里。", "empty"),
+      );
+    state.cursors[kind] = data.next_cursor;
+    $("more-" + kind).hidden = !data.next_cursor;
+  } finally {
+    if (state.listRequest === ticket) state.listRequest = null;
   }
-  if (!state.ids[kind].size)
-    $(kind).append(
-      node("p", kind === "runs" ? "还没有研究任务。" : "还没有简报。", "empty"),
-    );
-  state.cursors[kind] = data.next_cursor;
-  $("more-" + kind).hidden = !data.next_cursor;
 }
 function updateGenerateButton() {
   $("preview").disabled = state.generating;
@@ -550,8 +659,12 @@ function readingItem(item, index) {
 async function showBrief(id) {
   const view = ++state.briefView;
   clearTimeout(state.mailTimer);
+  $("reading-status").hidden = false;
+  $("reading-message").textContent = "正在打开简报…";
+  $("retry-reading").hidden = true;
   const b = await request("/briefs/" + encodeURIComponent(id));
   if (view !== state.briefView) return;
+  $("reading-status").hidden = true;
   $("brief-panel").hidden = false;
   $("today-empty").hidden = true;
   $("edition-note").textContent =
@@ -724,15 +837,7 @@ function authMode(mode) {
 }
 async function boot() {
   window.addEventListener("hashchange", () => {
-    if (!state.user || window.location.hash === "#main") return;
-    const page = window.location.hash.slice(1);
-    setPage(page === "account" ? "settings" : page);
-    if (state.page === "today")
-      showLatest().catch((e) => {
-        if (e.name !== "AbortError") notice(e.message, true);
-      });
-    if (page === "account")
-      $("account-section").scrollIntoView({ block: "start" });
+    route();
   });
   $("login-tab").addEventListener("click", () => authMode("login"));
   $("register-tab").addEventListener("click", () => authMode("register"));
@@ -765,6 +870,7 @@ async function boot() {
     action($("logout"), async () => {
       await request("/auth/logout", { method: "POST", body: {} });
       reset();
+      window.history.replaceState(null, "", "#today");
       state.csrf = null;
       await session(false);
       notice("已退出登录。");
@@ -780,6 +886,7 @@ async function boot() {
       });
       state.user = data.user;
       $("greeting").textContent = data.user.nickname;
+      $("profile-draft").textContent = "";
       notice("资料已保存；下次请使用当前邮箱登录。");
     });
   });
@@ -789,19 +896,19 @@ async function boot() {
       const f = e.target.elements;
       await request("/subscription", {
         method: "PUT",
-        body: {
-          topics: splitValues(f.topics.value),
-          keywords: splitValues(f.keywords.value),
-          exclude_keywords: splitValues(f.exclude_keywords.value),
-          max_items: Number(f.max_items.value),
-          enabled: f.enabled.checked,
-          push_time: f.push_time.value,
-        },
+        body: subscriptionPayload(e.target),
       });
       await loadSubscription();
+      $("subscription-draft").textContent = "";
       notice("订阅已保存，已有任务保留原偏好。");
     });
   });
+  for (const name of ["subscription", "profile"])
+    $(name + "-form").addEventListener("input", () => {
+      $(name + "-draft").textContent =
+        "有未保存的更改，切换页面会保留本次输入。";
+    });
+  $("retry-reading").addEventListener("click", () => route());
   $("preview").addEventListener("click", generatePreview);
   $("retry-status").addEventListener("click", () => {
     cancelPoll();
@@ -811,10 +918,8 @@ async function boot() {
     action($("open-generated"), async () => {
       const id = state.readyBrief;
       if (!id) return;
-      setPage("today");
-      await showBrief(id);
+      await navigate("#brief/" + encodeURIComponent(id));
       $("open-generated").hidden = true;
-      $("brief-title").focus();
     }),
   );
   for (const kind of ["briefs"]) {

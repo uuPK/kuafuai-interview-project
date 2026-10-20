@@ -509,6 +509,28 @@ main {
   font-size: 1.06rem;
   font-weight: 550;
 }
+.archive-link {
+  flex: 1;
+  min-width: 0;
+  color: #2d3830;
+  text-decoration: none;
+  font-size: 1.06rem;
+  font-weight: 550;
+}
+.archive-link:hover {
+  color: var(--green);
+}
+.reading-status {
+  max-width: 760px;
+  margin: 2rem auto;
+  padding: 1rem 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+#subscription-draft:empty,
+#profile-draft:empty {
+  display: none;
+}
 .row > button:hover {
   background: transparent;
   color: var(--green);

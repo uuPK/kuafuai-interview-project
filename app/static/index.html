@@ -200,8 +200,9 @@
                   type="checkbox"
                   checked
                 />启用每日订阅</label
-              ><small>暂停后保留历史简报，生成与推送按订阅状态执行。</small
-              ><button type="submit">保存订阅</button>
+              ><small>暂停后保留历史简报，生成与推送按订阅状态执行。</small>
+              <p id="subscription-draft" class="muted" role="status"></p>
+              <button type="submit">保存订阅</button>
             </form>
           </div>
           <div id="account-section" class="settings-layout">
@@ -231,7 +232,9 @@
                 /><small
                   >修改后使用新邮箱登录，已有简报保持原内容。</small
                 ></label
-              ><button type="submit" class="secondary">保存资料</button>
+              >
+              <p id="profile-draft" class="muted" role="status"></p>
+              <button type="submit" class="secondary">保存资料</button>
             </form>
           </div>
         </section>
@@ -252,6 +255,18 @@
         <a id="back-history" class="back-link" href="#history" hidden
           >← 返回历史简报</a
         >
+        <div
+          id="reading-status"
+          class="reading-status"
+          role="status"
+          aria-live="polite"
+          hidden
+        >
+          <span id="reading-message"></span
+          ><button id="retry-reading" class="quiet" type="button" hidden>
+            重新加载
+          </button>
+        </div>
         <article id="brief-panel" class="reading-sheet" hidden>
           <header class="brief-heading">
             <p id="brief-meta" class="eyebrow"></p>

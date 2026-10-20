@@ -68,8 +68,12 @@ class Element {
   reset() {
     for (const field of Object.values(this.elements)) field.value = "";
   }
-  focus() {}
-  scrollIntoView() {}
+  focus() {
+    this.focused = true;
+  }
+  scrollIntoView() {
+    this.scrolled = true;
+  }
 }
 
 export function deferred() {
@@ -125,6 +129,20 @@ export function harness(route) {
     createElement: (tag) => new Element(tag),
     addEventListener() {},
   };
+  const window = {
+    location: { hash: "#today" },
+    scrollY: 0,
+    scrollTo(options) {
+      this.scrollY = options.top;
+    },
+    history: {
+      replaceState(_state, _title, hash) {
+        window.location.hash = hash;
+      },
+    },
+    addEventListener() {},
+  };
+  sandbox.window = window;
   const run = (code) => vm.runInContext(code, sandbox);
   run(
     "reset({id:'reader',email:'reader@example.com',nickname:'读者'}); state.csrf='fixture-csrf'",
@@ -133,6 +151,7 @@ export function harness(route) {
     run,
     calls,
     timers,
+    window,
     get: (id) => sandbox.document.getElementById(id),
   };
 }

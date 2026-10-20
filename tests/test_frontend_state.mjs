@@ -331,3 +331,131 @@ test("resend confirmation cannot be cancelled while its request is being submitt
   await request;
   assert.match(ui.get("mail-panel").textContent, /待发送/);
 });
+
+const archiveItem = (id, created_at = "2026-10-20T01:00:00Z") => ({
+  brief_id: id,
+  created_at,
+  title: "简报 " + id,
+  item_count: 2,
+  mode: "preview",
+  status: "completed",
+});
+
+test("archives group by Beijing date and append pages without duplicate records or date headings", async () => {
+  const ui = harness((path) =>
+    path.includes("cursor=")
+      ? {
+          items: [
+            archiveItem("A"),
+            archiveItem("B"),
+            archiveItem("C", "2026-10-18T01:00:00Z"),
+          ],
+          next_cursor: null,
+        }
+      : { items: [archiveItem("A")], next_cursor: "next-page" },
+  );
+  await ui.run("loadList('briefs',true)");
+  assert.equal(ui.get("more-briefs").hidden, false);
+  await ui.run("loadList('briefs')");
+  const rows = ui.get("briefs").children;
+  assert.equal(rows.filter((x) => x.className === "row").length, 3);
+  assert.equal(rows.filter((x) => x.className === "archive-date").length, 2);
+  assert.equal(
+    rows.find((x) => x.className === "row").children[0].href,
+    "#brief/A",
+  );
+  assert.equal(ui.get("more-briefs").hidden, true);
+});
+
+test("failed archive refresh preserves loaded history and its pagination cursor", async () => {
+  let offline = false;
+  const ui = harness(() => {
+    if (offline) throw new Error("offline");
+    return { items: [archiveItem("A")], next_cursor: "next" };
+  });
+  await ui.run("loadList('briefs',true)");
+  offline = true;
+  await assert.rejects(ui.run("loadList('briefs',true)"));
+  assert.match(ui.get("briefs").textContent, /简报 A/);
+  assert.equal(ui.run("state.cursors.briefs"), "next");
+});
+
+test("only the newest refresh may replace archive rows and pending pagination cannot duplicate them", async () => {
+  const old = deferred();
+  let n = 0;
+  const ui = harness(() =>
+    ++n === 1
+      ? old.promise
+      : { items: [archiveItem("new")], next_cursor: null },
+  );
+  const pending = ui.run("loadList('briefs',true)");
+  await ui.run("loadList('briefs')");
+  await ui.run("loadList('briefs',true)");
+  old.resolve({ items: [archiveItem("old")], next_cursor: "stale" });
+  await pending;
+  assert.equal(n, 2);
+  assert.match(ui.get("briefs").textContent, /简报 new/);
+  assert.doesNotMatch(ui.get("briefs").textContent, /简报 old/);
+});
+
+test("navigation to settings invalidates an in-flight historical article and its mail polling", async () => {
+  const response = deferred();
+  const ui = harness(() => response.promise);
+  const opening = ui.run("route('#brief/A')");
+  await until(() => ui.calls.includes("/briefs/A"));
+  await ui.run("route('#settings')");
+  response.resolve({ ...brief("旧历史"), mode: "scheduled" });
+  await opening;
+  assert.equal(ui.get("settings-view").hidden, false);
+  assert.equal(ui.get("brief-panel").hidden, true);
+  assert.equal(ui.get("reading-status").hidden, true);
+  assert.equal(
+    ui.calls.some((path) => path.endsWith("/mail")),
+    false,
+  );
+});
+
+test("direct historical URLs open the record and returning to archive restores position and keeps its loaded pages", async () => {
+  const ui = harness((path) =>
+    path.startsWith("/briefs/")
+      ? brief("可回看的一期")
+      : { items: [archiveItem("A")], next_cursor: "next" },
+  );
+  await ui.run("route('#history')");
+  ui.window.scrollY = 640;
+  await ui.run("route('#brief/A')");
+  assert.equal(ui.get("history-view").hidden, true);
+  assert.equal(ui.get("back-history").hidden, false);
+  assert.equal(ui.get("brief-title").textContent, "可回看的一期");
+  assert.equal(ui.get("nav-history")["aria-current"], "page");
+  await ui.run("route('#history')");
+  assert.equal(ui.window.scrollY, 640);
+  assert.equal(
+    ui.calls.filter((path) => path === "/briefs?limit=10").length,
+    1,
+  );
+  assert.equal(ui.get("more-briefs").hidden, false);
+});
+
+test("settings navigation preserves unsaved fields while logout clears private drafts and archive state", async () => {
+  const ui = harness(() => emptyPage);
+  ui.get("subscription-form").elements.topics.value = "还未保存";
+  ui.get("profile-form").elements.email.value = "private@example.com";
+  await ui.run("route('#settings'); route('#history'); route('#settings')");
+  assert.equal(ui.get("subscription-form").elements.topics.value, "还未保存");
+  ui.run("reset()");
+  assert.equal(ui.get("profile-form").elements.email.value, "");
+  assert.equal(ui.get("subscription-form").elements.topics.value, "");
+  assert.equal(ui.run("state.archiveLoaded"), false);
+});
+
+test("failed article requests provide retry without showing the previously selected edition", async () => {
+  const ui = harness(() => {
+    throw new Error("offline");
+  });
+  ui.get("brief-title").textContent = "旧标题";
+  await ui.run("route('#brief/unavailable')");
+  assert.equal(ui.get("brief-panel").hidden, true);
+  assert.equal(ui.get("reading-status").hidden, false);
+  assert.equal(ui.get("retry-reading").hidden, false);
+});

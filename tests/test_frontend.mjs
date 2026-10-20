@@ -14,6 +14,8 @@ const {
   runFailureText,
   dayKey,
   editionNote,
+  parseRoute,
+  subscriptionPayload,
 } = await import(
   "data:text/javascript;base64," + Buffer.from(code).toString("base64")
 );
@@ -52,6 +54,44 @@ test("today labels use Beijing dates and never present a previous edition as tod
     editionNote("2026-10-18T01:00:00Z", "2026-10-20T08:00:00Z"),
     /今日尚未生成/,
   );
+});
+
+test("reading URLs resolve history, account and bounded safe brief identifiers", () => {
+  assert.deepEqual(parseRoute("#brief/brief-abc"), {
+    page: "detail",
+    id: "brief-abc",
+  });
+  assert.deepEqual(parseRoute("#account"), { page: "settings", account: true });
+  assert.deepEqual(parseRoute("#history"), { page: "history" });
+  for (const hash of [
+    "#brief/%",
+    "//evil.example",
+    "#brief/%2Fauth",
+    "#brief/" + "a".repeat(129),
+    "#brief/<script>",
+  ])
+    assert.deepEqual(parseRoute(hash), { page: "today" });
+});
+
+test("subscription form serialization preserves the backend contract and optional keywords", () => {
+  const elements = Object.fromEntries(
+    Object.entries({
+      topics: "AI，模型",
+      keywords: "",
+      exclude_keywords: "广告\n招聘",
+      max_items: "3",
+      push_time: "09:00",
+    }).map(([name, value]) => [name, { value }]),
+  );
+  elements.enabled = { checked: false };
+  assert.deepEqual(subscriptionPayload({ elements }), {
+    topics: ["AI", "模型"],
+    keywords: [],
+    exclude_keywords: ["广告", "招聘"],
+    max_items: 3,
+    enabled: false,
+    push_time: "09:00",
+  });
 });
 test("unknown server codes never become raw UI text", () => {
   assert.equal(messageFor("raw secret <script>"), "操作未完成，请稍后重试。");
