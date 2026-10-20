@@ -11,6 +11,21 @@ import {
   brief,
 } from "./frontend_support.mjs";
 
+test("reading navigation separates today, archive and settings and logout hides account navigation", () => {
+  const ui = harness(() => emptyPage);
+  ui.run("setPage('settings')");
+  assert.equal(ui.get("settings-view").hidden, false);
+  assert.equal(ui.get("today-view").hidden, true);
+  assert.equal(ui.get("history-view").hidden, true);
+  assert.equal(ui.get("brief-panel").hidden, true);
+  assert.equal(ui.get("nav-settings")["aria-current"], "page");
+  ui.run("setPage('history')");
+  assert.equal(ui.get("history-view").hidden, false);
+  ui.run("reset()");
+  assert.equal(ui.get("main-nav").hidden, true);
+  assert.equal(ui.get("account-bar").hidden, true);
+});
+
 test("time gaps are visible beside main news and doubtful sources stay in a separate linked section", async () => {
   const document = {
     title: "有信息说明的简报",

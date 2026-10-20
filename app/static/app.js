@@ -127,6 +127,7 @@ function node(tag, text, cls) {
   return n;
 }
 const state = {
+  page: "today",
   user: null,
   csrf: null,
   epoch: 0,
@@ -153,6 +154,26 @@ function notice(text, error = false) {
 function cancelPoll() {
   clearTimeout(state.timer);
   state.timer = null;
+}
+function setPage(page) {
+  state.page = ["today", "history", "settings"].includes(page) ? page : "today";
+  for (const name of ["today", "history", "settings"]) {
+    $(name + "-view").hidden = name !== state.page;
+    $("nav-" + name).setAttribute(
+      "aria-current",
+      name === state.page ? "page" : "false",
+    );
+  }
+  $("account-bar").open = false;
+  $("brief-panel").hidden =
+    state.page !== "today" || !$("brief-title").textContent;
+  $("today-date").textContent = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    weekday: "long",
+  }).format(new Date());
 }
 function reset(user = null) {
   cancelPoll();
@@ -183,6 +204,7 @@ function reset(user = null) {
   $("brief-panel").hidden = true;
   $("dashboard").hidden = !user;
   $("account-bar").hidden = !user;
+  $("main-nav").hidden = !user;
   $("auth-panel").hidden = !!user;
   $("profile-form").reset();
   $("subscription-form").reset();
@@ -202,6 +224,7 @@ function reset(user = null) {
     for (const key of ["email", "nickname"])
       $("profile-form").elements[key].value = user[key];
   }
+  setPage("today");
 }
 async function request(path, { method = "GET", body } = {}) {
   const epoch = state.epoch;
@@ -665,6 +688,13 @@ function authMode(mode) {
   }
 }
 async function boot() {
+  window.addEventListener("hashchange", () => {
+    if (!state.user || window.location.hash === "#main") return;
+    const page = window.location.hash.slice(1);
+    setPage(page === "account" ? "settings" : page);
+    if (page === "account")
+      $("account-section").scrollIntoView({ block: "start" });
+  });
   $("login-tab").addEventListener("click", () => authMode("login"));
   $("register-tab").addEventListener("click", () => authMode("register"));
   $("auth-form").addEventListener("submit", (e) => {
