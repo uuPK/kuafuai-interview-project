@@ -41,6 +41,8 @@ test("time gaps are visible beside main news and doubtful sources stay in a sepa
     unverified_items: [
       {
         title: "<script>原文标题</script>",
+        summary: "<img onerror=alert(1)>尚未确认的新闻简介",
+        topics: ["AI"],
         reason: "报道数字互相矛盾",
         url: "https://example.com/uncertain",
       },
@@ -56,10 +58,12 @@ test("time gaps are visible beside main news and doubtful sources stay in a sepa
   assert.match(pending.textContent, /不计入主新闻条数/);
   assert.match(pending.textContent, /<script>原文标题<\/script>/);
   assert.equal(
-    pending.children[2].children.at(-1).href,
+    pending.children[2].children.at(-1).children[0].href,
     "https://example.com/uncertain",
   );
   assert.match(pending.children[3].textContent, /来源链接无效/);
+  assert.match(pending.children[2].textContent, /简介尚未核实.*新闻简介/);
+  assert.match(pending.children[2].textContent, /<img onerror=alert\(1\)>/);
 });
 
 test("pending-only briefs never claim there were no candidates", async () => {
@@ -303,6 +307,82 @@ test("late mail status after logout cannot restore private content or polling", 
   assert.equal(ui.get("mail-panel").children.length, 0);
   assert.equal(ui.timers.size, 0);
   assert.equal(ui.get("notice").textContent, "已退出登录。");
+});
+
+test("preview can explicitly email the selected edition with no recipient or body supplied by the browser", async () => {
+  let mail = null;
+  const sending = deferred();
+  const ui = harness((path, options) => {
+    assert.equal(path, "/briefs/brief-selected/mail");
+    if (options.method === "POST") {
+      assert.equal(options.body, "{}");
+      assert.equal(options.headers["X-CSRF-Token"], "fixture-csrf");
+      return sending.promise;
+    }
+    return {
+      mail,
+      delivery_available: true,
+      recipient: "recipient@example.com",
+    };
+  });
+  await ui.run("mailStatus('brief-selected','preview',state.briefView)");
+  assert.match(ui.get("mail-panel").textContent, /预览不会自动发送/);
+  assert.match(ui.get("mail-panel").textContent, /recipient@example.com/);
+  const button = ui.get("brief-mail-actions").children[0];
+  const action = button.listeners.click[0]();
+  assert.equal(button.disabled, true);
+  mail = { status: "pending", attempts: 0 };
+  sending.resolve({ mail });
+  await action;
+  assert.match(ui.get("mail-panel").textContent, /待发送/);
+  assert.equal(ui.get("brief-mail-actions").children.length, 0);
+  assert.equal(ui.timers.size, 1);
+});
+
+test("unavailable email service disables explicit send and queued or sent mail never offers a duplicate send", async () => {
+  let value = { mail: null, delivery_available: false };
+  const ui = harness(() => value);
+  await ui.run("mailStatus('brief-A','preview',state.briefView)");
+  assert.equal(ui.get("brief-mail-actions").children[0].disabled, true);
+  assert.match(ui.get("mail-panel").textContent, /暂时无法发送/);
+  for (const status of ["pending", "sending", "sent"]) {
+    value = { mail: { status, attempts: 1 }, delivery_available: true };
+    await ui.run("mailStatus('brief-A','preview',state.briefView)");
+    assert.equal(ui.get("brief-mail-actions").children.length, 0);
+  }
+});
+
+test("recipient allowlist blocks sending upfront with a clear explanation", async () => {
+  const ui = harness(() => ({
+    mail: null,
+    delivery_available: false,
+    unavailable_reason: "MAIL_TEST_RECIPIENT_MISMATCH",
+  }));
+  await ui.run("mailStatus('brief-A','preview',state.briefView)");
+  assert.equal(ui.get("brief-mail-actions").children[0].disabled, true);
+  assert.match(
+    ui.get("mail-panel").textContent,
+    /当前收件邮箱不在服务端测试名单/,
+  );
+});
+
+test("manual send response after changing article cannot restore old delivery status or notices", async () => {
+  const sending = deferred();
+  const ui = harness((_path, options) =>
+    options.method === "POST"
+      ? sending.promise
+      : { mail: null, delivery_available: true },
+  );
+  await ui.run("mailStatus('brief-A','preview',state.briefView)");
+  const button = ui.get("brief-mail-actions").children[0];
+  const action = button.listeners.click[0]();
+  ui.run("reset(); notice('已退出登录。')");
+  sending.resolve({ mail: { status: "pending" } });
+  await action;
+  assert.equal(ui.get("mail-panel").children.length, 0);
+  assert.equal(ui.get("brief-mail-actions").children.length, 0);
+  assert.equal(ui.get("notice").textContent, "已退出登录。");
+  assert.equal(ui.timers.size, 0);
 });
 
 test("resend confirmation cannot be cancelled while its request is being submitted", async () => {

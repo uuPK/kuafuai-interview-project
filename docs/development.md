@@ -397,3 +397,13 @@ SQLite v16 新增 mail_dispatch（领取令牌、到期、下次尝试、周期�
 2026-10-20 的前端只消费既有身份/订阅、简报和任务状态API，不读取详细事件接口。生成完成后单独请求最新简报摘要，提示主动打开；已加载的历史分页和正在阅读的正文保持原选择。未保存表单在页面间保留，退出或会话变化时清空。来源链接默认显示域名，依据摘录通过原生details展开，时间与真实性说明保持可见。HTML、CSS和JS继续从现有三个静态入口交付，后端业务与持久化契约保持原样。
 
 `tests/ui_audit_fixture.py <隔离测试目录>` 为已注册的 browser-stage4@example.com 测试账号增加 12 份明确标注 fixture 的历史文档，包含连续英文、HTML 字样、引用和 58 条事件。应在测试服务停止时准备数据，再启动 tests.ui_fixture；目录不得指向真实用户数据。文档直接用于展示验收，不经过新闻研究和引用质量验收。邮件 unknown 样例仍由 ui_mail_fixture.py 通过实际回环 SMTP 丢失确认生成。
+
+## 2026-10-20 待核实简介与显式邮件发送
+
+UnverifiedItem 增加兼容旧记录的 summary/topics。模型提供中文简介，BriefRules 检查敏感信息、排除词、候选归属和订阅话题；未提供简介时使用本任务已保存的检索摘要或正文节选并标注尚未核实。最终事实拒绝保留原稿简介及具体核对问题，不写已确认事实历史。SubmissionJob.version=2 固定新文档；缺少版本的旧任务按原意图验证恢复，BriefStore.get 仅补充阅读投影，不改写旧文档和邮件。
+
+POST /briefs/{brief_id}/mail 接受空对象，经身份、CSRF、归属、配置和启用状态检查后，为当前保存的简报入队。账户收件邮箱与 BriefStore 文档由服务端取得，浏览器不能指定收件人或邮件正文。DispatchStore.send 与 OutboxStore.reserve 在事务内复用唯一发送记录；预览仅在显式请求时发送。GET /briefs/{brief_id}/mail 增加 recipient 元数据，已入队后展示固定收件人。Worker 处理 SMTP、重试及恢复，HTTP 不直接发信。
+
+每日 HH:mm 继续由 subscription/schedules 执行，页面明确到点生成、完成后发送。前端通过 briefView 与会话取消保护迟到响应；新接口没有新增 SMTP 配置、权限开关或数据库表。针对性验收见 test_manual_mail.py、test_verification_display.py、test_unverified_fallback.py 与 test_frontend_state.mjs；既有 test_schedules.py 验证时区、改时、暂停和日唯一。
+
+发送可用性还检查固定收件人是否符合 SMTP_TEST_RECIPIENT；GET 返回 unavailable_reason，名单不匹配时禁用发送并显示原因，POST 在入队前返回 MAIL_TEST_RECIPIENT_MISMATCH，不暴露允许地址。SMTP 发送前继续执行同一校验。

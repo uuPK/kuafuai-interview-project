@@ -20,7 +20,7 @@ const errors = {
   AUTH_UNAVAILABLE: "登录服务尚未配置，请联系维护者。",
   AUTH_REQUIRED: "登录已过期，请重新登录。",
   SUBSCRIPTION_REQUIRED: "请先保存订阅偏好。",
-  SUBSCRIPTION_DISABLED: "订阅已暂停，请启用并保存后再生成。",
+  SUBSCRIPTION_DISABLED: "订阅已暂停，请启用并保存后再生成或发送。",
   CSRF_REJECTED: "会话凭据已更新，请重试。",
   SENSITIVE_INPUT: "资料和偏好中不能包含服务凭据。",
   NOT_FOUND: "这条记录不存在或当前账号无权查看。",
@@ -29,6 +29,8 @@ const errors = {
   CONFIRM_DUPLICATE_DELIVERY: "重发前需要确认可能重复投递。",
   MAIL_NOT_RETRYABLE: "当前邮件状态不能重发。",
   MAIL_UNAVAILABLE: "邮件服务尚未启用或配置不完整，请联系维护者。",
+  MAIL_TEST_RECIPIENT_MISMATCH:
+    "当前收件邮箱不在服务端测试名单内，请在个人资料中使用已配置的测试邮箱，或联系维护者调整名单。",
 };
 export function splitValues(value) {
   return value
@@ -307,7 +309,12 @@ function reset(user = null) {
   $("topic-summary").textContent = "为你关注的话题整理";
   $("subscription-draft").textContent = "";
   $("profile-draft").textContent = "";
-  for (const id of ["briefs", "brief-content", "mail-panel"])
+  for (const id of [
+    "briefs",
+    "brief-content",
+    "mail-panel",
+    "brief-mail-actions",
+  ])
     $(id).replaceChildren();
   $("brief-panel").hidden = true;
   $("dashboard").hidden = !user;
@@ -671,9 +678,39 @@ function readingItem(item, index) {
   article.append(evidence);
   return article;
 }
+function unverifiedItem(item, index) {
+  const article = node("section", undefined, "news-item");
+  article.append(
+    node("span", String(index + 1).padStart(2, "0"), "news-number"),
+    node("h4", item.title),
+  );
+  const topics = node("div", undefined, "news-topics");
+  for (const topic of item.topics || []) topics.append(node("span", topic));
+  if (topics.childNodes.length) article.append(topics);
+  article.append(
+    node("p", "简介尚未核实 · " + item.reason, "verification-note"),
+    node(
+      "p",
+      item.summary || "暂未取得可展示的简介，请查看原文了解内容。",
+      "news-summary",
+    ),
+  );
+  const links = node("div", undefined, "source-links");
+  const href = safeURL(item.url);
+  if (href) {
+    const link = node("a", "查看原文 ↗");
+    link.href = href;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    links.append(link);
+  } else links.append(node("span", "来源链接无效"));
+  article.append(links);
+  return article;
+}
 async function showBrief(id) {
   const view = ++state.briefView;
   clearTimeout(state.mailTimer);
+  $("brief-mail-actions").replaceChildren();
   $("reading-status").hidden = false;
   $("reading-message").textContent = "正在打开简报…";
   $("retry-reading").hidden = true;
@@ -696,7 +733,7 @@ async function showBrief(id) {
     content.append(
       node(
         "p",
-        "最终事实核对仍有问题，本次仅交付待核实原文线索，未确认任何主新闻。",
+        "最终事实核对仍有问题，以下简介尚未核实，未确认任何主新闻。",
         "verification-note",
       ),
     );
@@ -722,22 +759,8 @@ async function showBrief(id) {
         "muted",
       ),
     );
-    for (const item of b.document.unverified_items) {
-      const candidate = node("section", undefined, "news-item");
-      candidate.append(
-        node("h4", item.title),
-        node("p", "待核实原因：" + item.reason),
-      );
-      const href = safeURL(item.url);
-      if (href) {
-        const link = node("a", "查看待核实原文");
-        link.href = href;
-        link.target = "_blank";
-        link.rel = "noopener noreferrer";
-        candidate.append(link);
-      } else candidate.append(node("p", "来源链接无效"));
-      section.append(candidate);
-    }
+    for (const [index, item] of b.document.unverified_items.entries())
+      section.append(unverifiedItem(item, index));
     content.append(section);
   }
   for (const item of b.document.uncovered_topics)
@@ -754,28 +777,68 @@ async function showBrief(id) {
 async function mailStatus(id, mode, view) {
   if (view !== state.briefView || !state.user) return;
   clearTimeout(state.mailTimer);
-  if (mode === "preview") {
-    $("mail-panel").replaceChildren(
-      node("p", "预览仅保存在页面，不发送邮件。", "muted"),
-    );
-    return;
-  }
-  let active = true;
+  let active = false;
   try {
-    const { mail, delivery_available } = await request(
-      `/briefs/${encodeURIComponent(id)}/mail`,
-    );
+    const { mail, delivery_available, recipient, unavailable_reason } =
+      await request(`/briefs/${encodeURIComponent(id)}/mail`);
     if (view !== state.briefView || !state.user) return;
     const panel = $("mail-panel");
-    panel.replaceChildren(node("h3", "邮件状态"));
+    panel.replaceChildren(node("h3", "邮箱投递"));
+    panel.append(node("p", "收件邮箱：" + (recipient || state.user.email)));
+    const actions = $("brief-mail-actions");
+    actions.replaceChildren();
     if (!mail) {
-      panel.append(node("p", "本次简报未入邮件队列，提交时订阅可能已暂停。"));
+      panel.append(
+        node(
+          "p",
+          mode === "preview"
+            ? "预览不会自动发送。点击上方按钮，将这份简报发送到收件邮箱。"
+            : "这份简报尚未发送，可以手动发送到收件邮箱。",
+        ),
+      );
+      const button = node("button", "发送这份简报到邮箱", "secondary");
+      button.type = "button";
+      button.disabled = !delivery_available;
+      button.addEventListener("click", () =>
+        action(button, async () => {
+          if (view !== state.briefView || !state.user) return;
+          try {
+            await request(`/briefs/${encodeURIComponent(id)}/mail`, {
+              method: "POST",
+              body: {},
+            });
+          } catch (e) {
+            if (view !== state.briefView || !state.user) return;
+            throw e;
+          }
+          if (view !== state.briefView || !state.user) return;
+          notice("已加入邮件发送队列，请稍候查看投递状态。");
+          await mailStatus(id, mode, view);
+        }),
+      );
+      actions.append(button);
+      if (!delivery_available)
+        panel.append(
+          node(
+            "p",
+            unavailable_reason === "MAIL_TEST_RECIPIENT_MISMATCH"
+              ? messageFor(unavailable_reason)
+              : "邮件服务尚未启用或配置不完整，暂时无法发送。",
+            "muted",
+          ),
+        );
       return;
     }
     panel.append(node("p", mailText(mail)));
     if (!delivery_available)
       panel.append(
-        node("p", "邮件服务尚未启用或配置不完整；队列已保留。", "muted"),
+        node(
+          "p",
+          unavailable_reason === "MAIL_TEST_RECIPIENT_MISMATCH"
+            ? messageFor(unavailable_reason) + " 队列已保留。"
+            : "邮件服务尚未启用或配置不完整；队列已保留。",
+          "muted",
+        ),
       );
     if (mail.can_resend && delivery_available) {
       const button = node("button", "重发这封邮件", "quiet");

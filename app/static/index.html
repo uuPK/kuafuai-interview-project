@@ -108,7 +108,7 @@
             <div class="heading-action">
               <button id="preview" type="button">
                 生成预览 <span aria-hidden="true">↗</span></button
-              ><small>按当前订阅生成 · 不发送邮件</small>
+              ><small>按当前订阅生成 · 不自动发送邮件</small>
             </div>
           </div>
           <div class="subscription-strip">
@@ -201,7 +201,7 @@
                     <option selected>5</option>
                   </select></label
                 ><label
-                  >每日推送时间（北京时间）<input
+                  >每日邮件生成时间（北京时间）<input
                     name="push_time"
                     type="time"
                     value="09:00"
@@ -213,8 +213,10 @@
                   name="enabled"
                   type="checkbox"
                   checked
-                />启用每日订阅</label
-              ><small>暂停后保留历史简报，生成与推送按订阅状态执行。</small>
+                />启用每日自动生成与邮件发送</label
+              ><small
+                >每天按设定时间开始生成，完成后发送至下方个人资料中的收件邮箱。保存后生效；预览需手动点击发送。暂停订阅后，生成与邮件发送均暂停，历史简报仍可阅读。</small
+              >
               <p id="subscription-draft" class="muted" role="status"></p>
               <button type="submit">保存订阅</button>
             </form>
@@ -272,6 +274,7 @@
             <p id="brief-meta" class="eyebrow"></p>
             <h2 id="brief-title" tabindex="-1"></h2>
             <p id="brief-count" class="muted"></p>
+            <div id="brief-mail-actions"></div>
           </header>
           <div id="brief-content"></div>
           <div id="mail-panel"></div>

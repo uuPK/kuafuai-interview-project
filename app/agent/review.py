@@ -43,7 +43,7 @@ max_items是条数上限，不要求凑满；不能仅因搜索还有其他候�
 publication_note只说明时间信息不足，不代表正文事实不可靠。媒体报道可作为已注明来源的依据；不能仅因时间未确认或来源为媒体，要求改引官方主来源或把有正文支持的数字移入待核实。
 display_eligible=true的来源可使用，usable_in_window只表示时间已确认。明确超窗的来源不得被写成窗口内新闻。
 主新闻的标题/摘要不能把未确认的日期表述为“今日发布”等确定结论；数字、范围、实体等事实仍须被正文支持。
-unverified_items是单独附在末尾的待核实候选，不是已证实新闻、不计入主新闻条数。只核对原因与已保存观察是否一致、订阅相关性和是否误称已证实；缺少正文或事实仍待查证正是允许列在此处的原因，不能因此拒绝这份交付。
+unverified_items是单独附在末尾的待核实候选，不是已证实新闻、不计入主新闻条数。简介也尚未核实，保留材料中的报道内容并明确疑点；只核对原因与已保存观察是否一致、订阅相关性和是否误称已证实；缺少正文或事实仍待查证正是允许列在此处的原因，不能因此拒绝这份交付。
 display_notes和unverified_sources由服务端生成，前者会明确展示缺项，后者提供已发现原文链接。候选已移至待核实列表时，不再按主新闻的事实和引用标准要求其通过。
 空简报结合发现结果和已取得正文核对原因，依赖故障不能充当没有新闻。
 公开正文须以中文表达，模型、机构和产品名称可保留原文；英文整段、空泛理由或夸大措辞反馈问题。
@@ -132,6 +132,11 @@ class ReviewInput:
         values.extend(
             (f"draft.unverified_items[{i}].reason", item.reason)
             for i, item in enumerate(draft.unverified_items)
+        )
+        values.extend(
+            (f"draft.unverified_items[{i}].summary", item.summary)
+            for i, item in enumerate(draft.unverified_items)
+            if item.summary
         )
         for field, text in values:
             if not re.search(r"[\u3400-\u9fff]", text):

@@ -3,11 +3,11 @@
 from app.agent.briefs import BriefDraft, UncoveredTopic, UnverifiedItem
 
 
-def unverified_draft(draft, checked, issues, topics):
+def unverified_draft(draft, checked, issues, topics, *, include_summaries=True):
     sources = {source.source_id: source for source in checked.sources}
     candidates, seen = [], set()
 
-    def add(candidate_id, field):
+    def add(candidate_id, field, item):
         if candidate_id in seen:
             return
         seen.add(candidate_id)
@@ -17,7 +17,11 @@ def unverified_draft(draft, checked, issues, topics):
             if issue.field == field or issue.field.startswith(field + ".")
         ]
         relevant.extend(issue.issue for issue in issues if issue.field in {"draft", "draft.title"})
-        reason = "最终事实核对仍有问题，本条仅保留原文线索。"
+        reason = (
+            "最终事实核对仍有问题，以下简介尚未核实。"
+            if include_summaries
+            else "最终事实核对仍有问题，本条仅保留原文线索。"
+        )
         reason += (
             "核对问题：" + "；".join(dict.fromkeys(relevant))
             if relevant
@@ -25,12 +29,19 @@ def unverified_draft(draft, checked, issues, topics):
         )
         if len(reason) > 500:
             reason = reason[:480] + "…完整问题见任务核对反馈。"
-        candidates.append(UnverifiedItem(candidate_id=candidate_id, reason=reason))
+        candidates.append(
+            UnverifiedItem(
+                candidate_id=candidate_id,
+                reason=reason,
+                summary=item.summary if include_summaries else None,
+                topics=item.topics if include_summaries else (),
+            )
+        )
 
     for i, item in enumerate(draft.items):
-        add(sources[item.citations[0].source_id].candidate_id, f"draft.items[{i}]")
+        add(sources[item.citations[0].source_id].candidate_id, f"draft.items[{i}]", item)
     for i, item in enumerate(draft.unverified_items):
-        add(item.candidate_id, f"draft.unverified_items[{i}]")
+        add(item.candidate_id, f"draft.unverified_items[{i}]", item)
     if not candidates:
         return None
     return BriefDraft(

@@ -581,3 +581,15 @@ docs/delivery.md 提供交付入口、人工测试次序、配置重启方式、
 交付镜像sha256:5ca17fc924b2abea3f944b41ccff6f0b11ee63b2a0be2b3e2446785312652e01，API/Worker均healthy。三份静态资源在工作区、容器与实际HTTP响应中的SHA256一致，主页、健康、JS、CSS与图标均200；与改版前提交c50323e比较，app目录只变更app/static内三个文件。原daily-ai-news-data卷保留，凭据未修改，报告final-frontend-instance-20261020.json。页面截图frontend-reading-desktop-20261020.jpg、frontend-today-desktop-20261020.jpg、frontend-history-desktop-20261020.jpg可供review；临时响应式尺寸已清除。
 
 最终交付扫描186个已跟踪文件和5项本地敏感配置，密钥匹配、禁止跟踪文件均为0；git diff --check和前端Prettier格式检查通过。README与用户现有AGENTS.md改动保持原样，无关未跟踪文件未纳入提交。
+
+## 2026-10-20 待核实简介与手动邮件发送
+
+用户直接要求待核实新闻增加简介，并可设置每日邮件时间和手动发送。新增 summary/topics、保留最终拒绝原稿简介、旧记录阅读投影与版本化提交恢复；待核实仍独立分栏、显示具体疑点与原文，不计主新闻和已确认事实历史。新增受 CSRF 和归属保护的 POST /briefs/{brief_id}/mail，服务端绑定账户收件人与保存文档，唯一入队并复用 Worker 发送与恢复。每日时间沿用 Asia/Shanghai 调度，页面明确到点生成、完成后发送。
+
+自动验证：scripts/verify.py --docker --node D:/Programs/node-v24.18.0-win-x64/node.exe 通过，Ruff 检查和格式检查通过，1450项 Python 测试通过、29项按平台/真实服务开关跳过，覆盖率95.70%；40项 Node 前端测试通过。新功能针对性47项通过。本地 SMTP 实际投递、并发请求唯一入队、固定收件人、重复请求不再投递、unknown 确认和旧提交恢复均覆盖。
+
+真实浏览器使用独立 localhost:8767 测试目录与明确 fixture 新闻：待核实栏目显示话题、简介、具体疑点和原文链接；手动发送从 pending 变为 sent，显示实际收件人；将每日时间改为23:57，保存后刷新仍显示相同设置和下次计划。窄屏阅读排版已目视检查。截图在 Git 忽略的 data/acceptance/unverified-intro-mail-20261020.png。未向真实外部邮箱额外发信，QQ→Gmail 联通沿用此前用户已确认记录；当前测试收件名单继续有效。
+
+正式实例更新后，最近三份真实历史简报的待核实简介覆盖为5/5、5/5、1/1。发现当前账户邮箱与服务端测试名单不符，补充发送入口的提前禁用及原因提示，保持原名单；未向真实邮箱发送。名单限制补充后，108项邮件/SMTP/产品接口 Python 回归和最终41项 Node 前端测试通过；Ruff检查及格式检查通过。
+
+最终镜像已部署到现有 daily-ai-news-data 卷，API/Worker 均 healthy；两者本轮14个应用文件均与工作区一致。正式浏览器确认旧简报简介和发送入口已更新，测试名单不符时按钮禁用并显示原因，控制台无错误。原账户、订阅、历史和真实邮件记录保持原有配置与内容。

@@ -434,9 +434,10 @@ main {
 .unverified-items .news-item {
   padding: 1.5rem 0;
 }
-.unverified-items .news-item p {
-  font-size: 0.85rem;
-  color: #6c6f63;
+.unverified-items .news-item h4 {
+  font-size: 1.18rem;
+  line-height: 1.6;
+  margin: 0.5rem 0;
 }
 .unverified-items a {
   font-size: 0.8rem;
@@ -452,6 +453,9 @@ main {
   border-top: 1px solid var(--line);
   margin-top: 2rem;
   padding-top: 1rem;
+}
+#brief-mail-actions {
+  margin-top: 1.2rem;
 }
 #mail-panel h3 {
   font-size: 0.9rem;

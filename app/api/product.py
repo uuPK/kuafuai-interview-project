@@ -106,10 +106,32 @@ def brief(brief_id: ResourceID, request: Request, account: Identity):
 
 @router.get("/briefs/{brief_id}/mail", dependencies=READ)
 def mail(brief_id: ResourceID, request: Request, account: Identity):
+    delivery = request.app.state.dispatch_store.delivery(brief_id, account.id, account.email)
+    smtp = request.app.state.smtp_transport
+    reason = (
+        "MAIL_UNAVAILABLE"
+        if not smtp.ready
+        else (
+            None
+            if smtp.recipient_allowed(delivery["recipient"])
+            else "MAIL_TEST_RECIPIENT_MISMATCH"
+        )
+    )
     return {
-        "mail": request.app.state.dispatch_store.status(brief_id, account.id),
-        "delivery_available": request.app.state.smtp_transport.ready,
+        **delivery,
+        "delivery_available": reason is None,
+        "unavailable_reason": reason,
     }
+
+
+@router.post("/briefs/{brief_id}/mail", status_code=202, dependencies=WRITE)
+def send_mail(brief_id: ResourceID, form: EmptyInput, request: Request, account: Identity):
+    delivery = request.app.state.dispatch_store.delivery(brief_id, account.id, account.email)
+    if not request.app.state.smtp_transport.ready:
+        raise ProductError("MAIL_UNAVAILABLE", 503)
+    if not request.app.state.smtp_transport.recipient_allowed(delivery["recipient"]):
+        raise ProductError("MAIL_TEST_RECIPIENT_MISMATCH")
+    return request.app.state.dispatch_store.send(brief_id, account.id, account.email)
 
 
 @router.post("/briefs/{brief_id}/mail/resend", status_code=202, dependencies=WRITE)

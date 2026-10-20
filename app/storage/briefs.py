@@ -20,6 +20,7 @@ from app.tools.models import ArgumentIssue, ToolFailure, ToolInvocation, ToolRes
 
 
 class SubmissionJob(StoredModel):
+    version: Literal[1, 2] = 1
     brief_id: str = Field(pattern=r"^brief-[a-f0-9]{32}$")
     run_id: str
     tool_call_id: str
@@ -103,7 +104,7 @@ class BriefStore:
             self._problem()
 
     def _validate(self, context, job):
-        checked, rejected = self.rules.check(context, job.draft)
+        checked, rejected = self.rules.check(context, job.draft, enrich_pending=job.version >= 2)
         if (
             rejected is not None
             or checked.sources != job.sources
@@ -112,7 +113,9 @@ class BriefStore:
         ):
             self._problem()
         if job.fallback_document is not None:
-            document = self.unverified_document(context, job.draft, checked, job.review_issues)
+            document = self.unverified_document(
+                context, job.draft, checked, job.review_issues, include_summaries=job.version >= 2
+            )
             if document is None or document != job.fallback_document:
                 self._problem()
             checked = replace(checked, document=document)
@@ -120,7 +123,7 @@ class BriefStore:
             self._problem()
         return checked
 
-    def unverified_document(self, context, draft, checked, issues):
+    def unverified_document(self, context, draft, checked, issues, *, include_summaries=True):
         # Accept a complete negative model review or the owned exact-history fact check.
         # Capacity, unsafe input, service and protocol failures retain their error path.
         from app.agent.protocol import ModelResponse
@@ -156,10 +159,12 @@ class BriefStore:
         if outcome.approved or outcome.issues != tuple(issues):
             self._problem()
         run = self.runs.get_run(context.run_id, context.user_id)
-        proposed = unverified_draft(draft, checked, issues, run.subscription.topics)
+        proposed = unverified_draft(
+            draft, checked, issues, run.subscription.topics, include_summaries=include_summaries
+        )
         if proposed is None:
             return None
-        pending, rejected = self.rules.check(context, proposed)
+        pending, rejected = self.rules.check(context, proposed, enrich_pending=include_summaries)
         if rejected is not None:
             return None
         return BriefDocument(**{**pending.document.model_dump(), "review_status": "unverified"})
@@ -187,6 +192,7 @@ class BriefStore:
         if call.status != "executing" or call.name != "submit_brief":
             raise PermissionError("submission intent requires an executing server-bound call")
         job = SubmissionJob(
+            version=2,
             brief_id="brief-" + uuid4().hex,
             run_id=context.run_id,
             tool_call_id=context.tool_call_id,
@@ -358,7 +364,60 @@ class BriefStore:
                 "run_id": row["run_id"],
                 "created_at": row["created_at"],
                 "review_basis": row["review_basis"],
-                "document": BriefDocument.model_validate_json(row["document_json"]),
+                "document": self._reading_document(row, user_id),
             }
         except ValueError:
             self._problem()
+
+    def _reading_document(self, row, owner):
+        """Enrich legacy reading views without rewriting frozen delivery/recovery intent."""
+        document = BriefDocument.model_validate_json(row["document_json"])
+        if not any(item.summary is None for item in document.unverified_items):
+            return document
+        with self.database.connection() as connection:
+            intent = connection.execute(
+                "SELECT payload_json FROM submission_jobs WHERE run_id=? "
+                "AND json_extract(payload_json,'$.brief_id')=?",
+                (row["run_id"], row["id"]),
+            ).fetchone()
+        originals = {}
+        if intent:
+            raw = SubmissionJob.model_validate_json(intent[0])
+            call = self.calls.get_call(row["run_id"], owner, raw.tool_call_id)
+            job = self._job(intent, call)
+            sources = {source.source_id: source for source in job.sources}
+            for item in job.draft.items:
+                source = sources.get(item.citations[0].source_id)
+                if source:
+                    originals[(source.candidate_id, source.url)] = item
+        pending = []
+        for item in document.unverified_items:
+            if item.summary is not None:
+                pending.append(item)
+                continue
+            original = originals.get((item.candidate_id, item.url))
+            summary, topics = (
+                (original.summary, original.topics) if original else (None, item.topics)
+            )
+            if not summary:
+                try:
+                    candidate = self.rules.sources.candidates.get_candidate(
+                        row["run_id"], owner, item.candidate_id
+                    )
+                except LookupError:
+                    candidate = None
+                if candidate and candidate.material.url == item.url:
+                    context = bind_context(
+                        self.runs, self.rules.settings.data_dir, row["run_id"], owner
+                    )
+                    summary = self.rules.pending_summary(context, candidate, item.url)
+            if summary:
+                summary = self.rules.redactor.clean(summary)
+                run = self.runs.get_run(row["run_id"], owner)
+                if any(
+                    word.casefold() in summary.casefold()
+                    for word in run.subscription.exclude_keywords
+                ):
+                    summary = None
+            pending.append(item.model_copy(update={"summary": summary, "topics": topics}))
+        return document.model_copy(update={"unverified_items": tuple(pending)})

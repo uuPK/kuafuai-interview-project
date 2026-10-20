@@ -38,6 +38,12 @@ class UncoveredTopic(ToolParameters):
 
 class UnverifiedItem(ToolParameters):
     candidate_id: str = Field(pattern=r"^cand-[a-f0-9]{32}$")
+    summary: Text | None = Field(
+        default=None,
+        max_length=2000,
+        description="基于已取得材料的中文简介，尚未核实，不表示已确认事实。",
+    )
+    topics: tuple[Topic, ...] = Field(default=(), max_length=20)
     reason: Text = Field(
         max_length=500,
         description="未能确认的事实、来源矛盾或无法取得正文等具体原因；不要写成已证实结论。",

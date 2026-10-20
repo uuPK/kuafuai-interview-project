@@ -26,7 +26,7 @@ class BriefRules:
         self.sources, self.settings = sources, settings
         self.redactor = Redactor(settings)
 
-    def check(self, context, draft):
+    def check(self, context, draft, *, enrich_pending=True):
         run = self.sources.runs.get_run(context.run_id, context.user_id)
         problems = []
 
@@ -173,6 +173,9 @@ class BriefRules:
         main_candidates = {meta.candidate_id for meta, _ in loaded.values()}
         for i, item in enumerate(draft.unverified_items):
             field = f"draft.unverified_items[{i}]"
+            names = [topic.casefold() for topic in item.topics]
+            if len(set(names)) != len(names) or not set(names) <= topics:
+                issue(field + ".topics", "话题必须来自订阅且不能重复")
             if item.candidate_id in seen_candidates or item.candidate_id in main_candidates:
                 issue(field + ".candidate_id", "候选不能重复，或同时出现在主新闻与待核实列表")
                 continue
@@ -188,12 +191,16 @@ class BriefRules:
             if self.redactor.contains_credential(material.url):
                 issue(field + ".candidate_id", "待核实来源地址含敏感信息，不能展示")
                 continue
-            if any(word in (material.title + "\n" + item.reason).casefold() for word in exclusions):
+            summary = item.summary
+            if summary is None and enrich_pending:
+                summary = self.pending_summary(context, candidate, material.url)
+            pending_text = "\n".join((material.title, item.reason, summary or "", *item.topics))
+            if any(word in pending_text.casefold() for word in exclusions):
                 issue(field, "待核实信息命中排除关键词")
                 continue
             pending.append(
                 PublishedUnverifiedItem(
-                    **item.model_dump(),
+                    **{**item.model_dump(), "summary": summary},
                     title=material.title.strip()[:300] or "待核实来源",
                     url=material.url,
                 )
@@ -216,6 +223,27 @@ class BriefRules:
             **{**draft.model_dump(), "items": tuple(published), "unverified_items": tuple(pending)}
         )
         return CheckedBrief(document, tuple(meta for meta, _ in loaded.values()), hints), None
+
+    def pending_summary(self, context, candidate, url):
+        """Use owned saved material only; excerpt fallback is explicitly unverified."""
+        if candidate.material.url != url:
+            return None
+        text = candidate.material.summary or candidate.material.snippet
+        prefix = "原文检索摘要（尚未核实）："
+        if not text or not text.strip():
+            with self.sources.database.connection() as connection:
+                row = connection.execute(
+                    "SELECT id FROM sources WHERE run_id=? "
+                    "AND json_extract(metadata_json,'$.candidate_id')=? AND url=? LIMIT 1",
+                    (context.run_id, candidate.candidate_id, url),
+                ).fetchone()
+            if row is None:
+                return None
+            meta, index = self.sources.get_source(context.run_id, context.user_id, row[0])
+            text = self.sources.files.verify(context, meta, index)
+            prefix = "原文节选（尚未核实）："
+        text = self.redactor.clean(text.strip())
+        return prefix + text[:1900] if text else None
 
     def rejection(self, problems, *, code="BRIEF_RULES_REJECTED", message=None):
         details = tuple(problems[:10])

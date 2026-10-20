@@ -53,7 +53,7 @@ class SubmissionTool:
                 outcome.issues,
                 code="BRIEF_REVIEW_REJECTED",
                 message="核对未通过，请处理全部问题。可删除无依据细节；无法补查时将仍有争议的整条"
-                "移入unverified_items，填写candidate_id和原因，补齐未覆盖话题与条数说明。"
+                "移入unverified_items，填写candidate_id、中文summary、订阅topics和原因，补齐未覆盖话题与条数说明。"
                 "仅有待核实候选也可提交。候选对应：" + mapping,
             )
         return self.store.stage(context, parameters.draft, checked, self.review_basis)
@@ -73,12 +73,12 @@ def register_submission(registry, store, *, reviewer=None, review_basis="indepen
             "检查并提交结构化中文简报draft。items最多5条且不超过订阅上限；"
             "每条带title/summary/topics/event_id/selection_reason/key_facts/citations，引用带"
             "source_id/start_offset/end_offset/quote；quote必须逐字符匹配固定正文。"
-            "正文充分但时间缺项可入items并自动标注；事实存疑候选填unverified_items的candidate_id/reason，"
+            "正文充分但时间缺项可入items并自动标注；事实存疑候选填unverified_items的candidate_id/summary/topics/reason，"
             "单独附后并生成原文链接，不计主新闻条数；在预算内先补查以尽量补齐条数。"
             "每个话题须有入选条目或uncovered_topics中的topic/reason；条数不足时提供shortfall_reason。"
             "空简报须先有有效搜索/RSS结果，依赖或材料失败不能当作无新闻。"
             "服务端检查归属、时间、哈希和排除词并生成链接；主新闻须独立核对通过。"
-            "第二次事实核对仍拒绝时，仅保存明确标注的待核实原文线索，不发布被拒绝的摘要与事实。",
+            "第二次事实核对仍拒绝时，保留简介、核对问题与原文链接，明确标为待核实；不计主新闻或已确认事实历史。",
             SubmitParameters,
             tool.submit,
             completion_status=submission_completion,

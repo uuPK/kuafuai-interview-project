@@ -45,16 +45,17 @@ class SMTPTransport:
     def ready(self):
         return self.settings.smtp_enabled and not self.settings.missing_service_fields("smtp")
 
+    def recipient_allowed(self, recipient):
+        test_recipient = self.settings.smtp_test_recipient
+        return not test_recipient or recipient.casefold() == test_recipient.casefold()
+
     def send(self, record, message_id, *, admit=lambda: True):
         s = self.settings
         if not self.ready:
             return SendOutcome("failed", "SMTP_CONFIGURATION")
         if not mailbox(s.smtp_from) or not mailbox(record.recipient):
             return SendOutcome("failed", "MAIL_ADDRESS_INVALID")
-        if (
-            s.smtp_test_recipient
-            and record.recipient.casefold() != s.smtp_test_recipient.casefold()
-        ):
+        if not self.recipient_allowed(record.recipient):
             return SendOutcome("failed", "MAIL_TEST_RECIPIENT_MISMATCH")
         host = s.smtp_host
         if len(host) > 253 or any(c.isspace() or c in "/@?#\\\x00" for c in host):

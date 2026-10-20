@@ -50,7 +50,9 @@ def test_last_negative_review_delivers_only_original_leads(tool_env, first_failu
             )
             assert document.unverified_items[0].url == source.url
             assert "23%" in document.unverified_items[0].reason
-            assert MODEL_SUMMARY not in document.model_dump_json()
+            assert document.unverified_items[0].summary == MODEL_SUMMARY
+            assert document.unverified_items[0].topics == ("开源模型",)
+            assert "简介尚未核实" in document.unverified_items[0].reason
             assert counts(env) == (1, 0, 0)
             assert len(model.requests) == (2 if first_failure == "review" else 1)
             assert env.runs.get_run(env.run.id, env.run.user_id).status == "completed"
@@ -58,7 +60,7 @@ def test_last_negative_review_delivers_only_original_leads(tool_env, first_failu
     asyncio.run(run())
 
 
-def test_final_negative_review_mail_contains_no_rejected_summary(tool_env):
+def test_final_negative_review_mail_labels_retained_summary_as_unverified(tool_env):
     async def run():
         env = tool_env
         async with review_world(env, ReviewModel(reject(), reject())) as world:
@@ -71,8 +73,55 @@ def test_final_negative_review_mail_contains_no_rejected_summary(tool_env):
             mail = world.briefs.outbox.get(result.data["brief_id"], env.run.user_id)
             assert "最终事实核对仍有问题" in mail.body_text
             assert "原文：https://" in mail.body_text and "核对问题" in mail.body_text
-            assert MODEL_SUMMARY not in mail.body_text
+            assert MODEL_SUMMARY in mail.body_text and "简介尚未核实：" in mail.body_text
             assert mail.status == "pending" and counts(env) == (1, 0, 1)
+
+    asyncio.run(run())
+
+
+def test_pre_upgrade_fallback_recovers_original_intent_and_enriches_reading_only(tool_env):
+    async def run():
+        env = tool_env
+        async with review_world(env, ReviewModel(reject(), reject())) as world:
+            value = draft(await draft_item(world))
+            scheduled(SimpleNamespace(env=env))
+            await world.executor.execute(env.run.id, env.run.user_id, invocation(value, "a"))
+            call = invocation(value, "b")
+            with pytest.raises(RuntimeError):
+                await world.executor.execute(
+                    env.run.id, env.run.user_id, call, on_finished=interrupt_feedback
+                )
+            with env.database.transaction() as connection:
+                row = connection.execute("SELECT payload_json FROM submission_jobs").fetchone()
+                payload = json.loads(row[0])
+                payload.pop("version")
+                pending = payload["fallback_document"]["unverified_items"][0]
+                pending.pop("summary")
+                pending.pop("topics")
+                pending["reason"] = pending["reason"].replace(
+                    "最终事实核对仍有问题，以下简介尚未核实。",
+                    "最终事实核对仍有问题，本条仅保留原文线索。",
+                )
+                connection.execute(
+                    "UPDATE submission_jobs SET payload_json=?", (json.dumps(payload),)
+                )
+            context = bind_context(
+                env.runs, env.settings.data_dir, env.run.id, env.run.user_id, tool_call_id="b"
+            )
+            result = await world.registry.get("submit_brief").handler(
+                context, SubmitParameters.model_validate_json(call.arguments)
+            )
+            world.executor.finish(env.run.id, env.run.user_id, call, result)
+            with env.database.connection() as connection:
+                saved = connection.execute("SELECT document_json FROM briefs").fetchone()[0]
+            assert MODEL_SUMMARY not in saved
+            brief_id = result.data["brief_id"]
+            assert (
+                world.briefs.get(brief_id, env.run.user_id)["document"].unverified_items[0].summary
+                == MODEL_SUMMARY
+            )
+            assert MODEL_SUMMARY not in world.briefs.outbox.get(brief_id, env.run.user_id).body_text
+            assert counts(env) == (1, 0, 1)
 
     asyncio.run(run())
 

@@ -35,6 +35,61 @@ def pending_draft(ready):
     }
 
 
+def test_pending_intro_is_frozen_in_document_and_mail_without_confirmed_history(brief_env):
+    ready = brief_env
+    ready.draft = pending_draft(ready)
+    ready.draft["unverified_items"][0].update(
+        summary="报道称模型新增了工具调用能力，具体性能数字尚未核实。", topics=["开源模型"]
+    )
+    scheduled(ready)
+    result = execute(ready)
+    document = ready.store.get(result.data["brief_id"], "user-1")["document"]
+    item = document.unverified_items[0]
+    assert item.summary == ready.draft["unverified_items"][0]["summary"]
+    assert item.topics == ("开源模型",)
+    assert counts(ready) == (1, 0, 1)
+    mail = ready.store.outbox.get(result.data["brief_id"], "user-1")
+    assert "简介尚未核实：" + item.summary in mail.body_text
+
+
+@pytest.mark.parametrize("case", ["excluded", "secret", "foreign_topic", "duplicate_topic"])
+def test_pending_intro_obeys_exclusions_redaction_and_topic_boundary(brief_env, case):
+    from tests.test_briefs import subscription
+
+    ready = brief_env
+    ready.draft = pending_draft(ready)
+    item = ready.draft["unverified_items"][0]
+    item.update(summary="这是尚未核实的简介", topics=["开源模型"])
+    if case == "excluded":
+        subscription(ready, exclude_keywords=("BLOCKED",))
+        item["summary"] += "BLOCKED"
+    elif case == "secret":
+        item["summary"] += " Authorization: Bearer fixture-private-token"
+    elif case == "foreign_topic":
+        item["topics"] = ["未订阅话题"]
+    else:
+        item["topics"] *= 2
+    assert execute(ready).error.code == "BRIEF_RULES_REJECTED"
+    assert counts(ready) == (0, 0, 0)
+
+
+def test_legacy_pending_intro_uses_owned_discovery_without_rewriting_saved_document(brief_env):
+    ready = brief_env
+    ready.draft = pending_draft(ready)
+    result = execute(ready)
+    with ready.env.database.transaction() as connection:
+        value = json.loads(connection.execute("SELECT document_json FROM briefs").fetchone()[0])
+        value["unverified_items"][0].pop("summary")
+        value["unverified_items"][0].pop("topics")
+        connection.execute("UPDATE briefs SET document_json=?", (json.dumps(value),))
+    with ready.env.database.connection() as connection:
+        saved = connection.execute("SELECT document_json FROM briefs").fetchone()[0]
+    item = ready.store.get(result.data["brief_id"], "user-1")["document"].unverified_items[0]
+    assert item.summary and "尚未核实" in item.summary
+    with ready.env.database.connection() as connection:
+        assert saved == connection.execute("SELECT document_json FROM briefs").fetchone()[0]
+
+
 @pytest.mark.parametrize(
     "status,phrase",
     [("missing", "缺少明确发布时间"), ("ambiguous", "缺少时区"), ("conflicting", "发布时间有冲突")],

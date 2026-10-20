@@ -243,6 +243,32 @@ class DispatchStore:
             "confirmation_required": record.status == "unknown",
         }
 
+    def delivery(self, brief_id, owner, recipient):
+        status = self.status(brief_id, owner)
+        if status is not None:
+            recipient = self.outbox.get(brief_id, owner).recipient
+        return {"mail": status, "recipient": recipient}
+
+    def send(self, brief_id, owner, recipient):
+        brief = self.briefs.get(brief_id, owner)
+        with self.database.transaction() as connection:
+            run = _record(self.runs._owned_row(connection, brief["run_id"], owner))
+            if (
+                not run.subscription.enabled
+                or self.outbox.delivery_enabled(connection, run) is not True
+            ):
+                raise ProductError("SUBSCRIPTION_DISABLED")
+            self.outbox.reserve(
+                connection,
+                run.id,
+                owner,
+                brief_id,
+                manual=True,
+                recipient=recipient,
+                document=brief["document"],
+            )
+        return self.delivery(brief_id, owner, recipient)
+
     def resend(self, brief_id, owner, *, confirm_duplicate=False):
         self.briefs.get(brief_id, owner)
         with self.database.transaction() as connection:

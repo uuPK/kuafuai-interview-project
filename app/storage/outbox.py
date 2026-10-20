@@ -30,8 +30,8 @@ def message_hash(recipient, subject, body):
     return digest(json.dumps([recipient, subject, body], ensure_ascii=False).encode("utf-8"))
 
 
-def render_message(run, document):
-    recipient = run.subscription.email
+def render_message(run, document, *, recipient=None):
+    recipient = recipient if recipient is not None else run.subscription.email
     if (
         len(recipient) > 254
         or not re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+", recipient)
@@ -72,7 +72,12 @@ def render_message(run, document):
     if document.unverified_items:
         lines.extend(["待核实信息（尚未确认，不计入主新闻条数）", ""])
         for item in document.unverified_items:
-            lines.extend([item.title, "待核实原因：" + item.reason, "原文：" + item.url, ""])
+            lines.append(item.title)
+            if item.summary:
+                lines.extend(["简介尚未核实：" + item.summary])
+            if item.topics:
+                lines.append("相关话题：" + "、".join(item.topics))
+            lines.extend(["待核实原因：" + item.reason, "原文：" + item.url, ""])
     lines.extend(f"未覆盖话题：{item.topic}；{item.reason}" for item in document.uncovered_topics)
     if document.shortfall_reason:
         lines.append("条数说明：" + document.shortfall_reason)
@@ -91,7 +96,9 @@ class OutboxStore:
     def _problem():
         raise ToolFailure("MAIL_STATE_PROBLEM", "发送记录或固定邮件内容不一致。")
 
-    def reserve(self, connection, run_id, user_id, brief_id):
+    def reserve(
+        self, connection, run_id, user_id, brief_id, *, manual=False, recipient=None, document=None
+    ):
         if not connection.in_transaction:
             raise ValueError("mail reservation requires the brief transaction")
         run = _record(self.runs._owned_row(connection, run_id, user_id))
@@ -100,8 +107,16 @@ class OutboxStore:
         ).fetchone()
         if row is None or run.status not in {"completed", "no_news"}:
             raise PermissionError("mail requires an accepted saved brief")
-        if run.mode != "scheduled":
+        if run.mode != "scheduled" and not manual:
             return None
+        existing = connection.execute(
+            "SELECT * FROM mail_outbox WHERE brief_id=?", (brief_id,)
+        ).fetchone()
+        if manual and existing is not None:
+            saved = self._record(existing)
+            if saved.run_id != run_id:
+                self._problem()
+            return saved
         enabled = self.delivery_enabled(connection, run)
         if type(enabled) is not bool:
             raise TypeError("delivery eligibility must return a boolean synchronously")
@@ -115,14 +130,17 @@ class OutboxStore:
             )
             return None
         try:
-            document = BriefDocument.model_validate_json(row["document_json"])
+            document = (
+                document
+                if manual and document is not None
+                else BriefDocument.model_validate_json(row["document_json"])
+            )
         except ValueError:
             self._problem()
-        recipient, subject, body = render_message(run, document)
+        recipient, subject, body = render_message(
+            run, document, recipient=recipient if manual else None
+        )
         payload_hash = message_hash(recipient, subject, body)
-        existing = connection.execute(
-            "SELECT * FROM mail_outbox WHERE brief_id=?", (brief_id,)
-        ).fetchone()
         if existing is not None:
             saved = self._record(existing)
             if saved.run_id != run_id or saved.payload_hash != payload_hash:
