@@ -459,3 +459,79 @@ test("failed article requests provide retry without showing the previously selec
   assert.equal(ui.get("reading-status").hidden, false);
   assert.equal(ui.get("retry-reading").hidden, false);
 });
+
+test("newly completed generation preserves already loaded archive pages and offers an explicit refresh", async () => {
+  let first = true;
+  const ui = harness((path) => {
+    if (path === "/auth/session") return session;
+    if (path === "/runs/A") return runRecord("completed", "new");
+    if (path === "/briefs?limit=1")
+      return { items: [archiveItem("new")], next_cursor: null };
+    if (first) {
+      first = false;
+      return { items: [archiveItem("old")], next_cursor: "page-two" };
+    }
+    return { items: [archiveItem("older")], next_cursor: "page-three" };
+  });
+  await ui.run("loadList('briefs',true)");
+  await ui.run("loadList('briefs')");
+  const previous = ui.get("briefs").textContent;
+  const cursor = ui.run("state.cursors.briefs");
+  await ui.run("selectRun('A')");
+  assert.equal(ui.get("briefs").textContent, previous);
+  assert.equal(ui.run("state.cursors.briefs"), cursor);
+  assert.equal(ui.get("refresh-briefs").textContent, "有新简报 · 刷新");
+  assert.equal(ui.run("state.latestBrief.brief_id"), "new");
+});
+
+test("opening a second article cannot be overwritten by the previous article's slow response", async () => {
+  const slow = deferred();
+  const ui = harness((path) =>
+    path === "/briefs/A" ? slow.promise : brief("新的阅读选择"),
+  );
+  const old = ui.run("route('#brief/A')");
+  await until(() => ui.calls.includes("/briefs/A"));
+  await ui.run("route('#brief/B')");
+  slow.resolve(brief("旧请求"));
+  await old;
+  assert.equal(ui.get("brief-title").textContent, "新的阅读选择");
+});
+
+test("registration exposes nickname and new-password semantics, login restores current-password", () => {
+  const ui = harness(() => emptyPage);
+  ui.run("authMode('register')");
+  assert.equal(ui.get("nickname-field").hidden, false);
+  assert.equal(
+    ui.get("auth-form").elements.password.autocomplete,
+    "new-password",
+  );
+  assert.equal(ui.get("auth-heading").textContent, "开启每日阅读");
+  ui.run("authMode('login')");
+  assert.equal(ui.get("nickname-field").hidden, true);
+  assert.equal(
+    ui.get("auth-form").elements.password.autocomplete,
+    "current-password",
+  );
+});
+
+test("CSRF refresh that changes the account cannot apply a stale form error to the new reader", async () => {
+  const ui = harness((path) =>
+    path === "/auth/session"
+      ? {
+          ...session,
+          user: { id: "next", nickname: "下一读者", email: "next@example.com" },
+        }
+      : {
+          ok: false,
+          status: 403,
+          json: async () => ({ error: { code: "CSRF_REJECTED" } }),
+        },
+  );
+  ui.run("notice('正在确认会话。')");
+  await ui.run(
+    "action(document.createElement('button'),()=>request('/subscription',{method:'PUT',body:{}}))",
+  );
+  assert.equal(ui.get("greeting").textContent, "下一读者");
+  assert.equal(ui.get("notice").textContent, "正在确认会话。");
+  assert.equal(ui.get("profile-form").elements.email.value, "next@example.com");
+});

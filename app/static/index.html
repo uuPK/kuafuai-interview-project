@@ -42,8 +42,8 @@
           <small>按偏好订阅 · 每日邮件送达 · 历史随时翻阅</small>
         </div>
         <div class="auth-card">
-          <h2>欢迎回来</h2>
-          <p class="muted">登录，开始今天的阅读。</p>
+          <h2 id="auth-heading">欢迎回来</h2>
+          <p id="auth-intro" class="muted">登录，开始今天的阅读。</p>
           <div class="tabs" role="group" aria-label="账户操作">
             <button id="login-tab" type="button" aria-pressed="true">
               登录</button
@@ -84,6 +84,20 @@
         </div>
       </section>
       <div id="dashboard" hidden>
+        <div
+          id="generation-status"
+          class="generation-status"
+          role="status"
+          aria-live="polite"
+          hidden
+        >
+          <span id="generation-text"></span
+          ><button id="open-generated" type="button" class="quiet" hidden>
+            阅读新简报 →</button
+          ><button id="retry-status" type="button" class="quiet" hidden>
+            重新连接
+          </button>
+        </div>
         <section id="today-view">
           <div class="page-heading">
             <div>
@@ -238,20 +252,6 @@
             </form>
           </div>
         </section>
-        <div
-          id="generation-status"
-          class="generation-status"
-          role="status"
-          aria-live="polite"
-          hidden
-        >
-          <span id="generation-text"></span
-          ><button id="open-generated" type="button" class="quiet" hidden>
-            阅读新简报 →</button
-          ><button id="retry-status" type="button" class="quiet" hidden>
-            重新连接
-          </button>
-        </div>
         <a id="back-history" class="back-link" href="#history" hidden
           >← 返回历史简报</a
         >

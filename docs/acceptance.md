@@ -563,3 +563,21 @@ docs/delivery.md 提供交付入口、人工测试次序、配置重启方式、
 代码冻结后的完整 scripts/verify.py --docker 回归1435 passed、29 skipped、345.44秒，覆盖率95.79%；Node前端19 passed，Ruff与格式通过，报告 verify-unverified-delivery-20261018.log、final-regression/tests.xml/coverage.json。29项跳过为23项显式真实服务、4项旧轨迹重放和2项Windows符号链接权限；真实Docker、Compose及恢复用例已包含在1435项内。最终镜像sha256:504098916451c97590dd3efd9ceb22e3adc93863564cca7eca02b6d3e1827d63，默认API/Worker均healthy，主页/健康/JS/CSS/图标全部200，本轮7个应用文件与运行容器逐一一致，见 final-unverified-instance-20261018.json。保留用户数据卷、旧任务与历史；QQ/Gmail实际收件沿用既有确认，未重复发信。用户对新闻事实与选题的最终人工审阅、公网Linux域名HTTPS继续按既有交付边界单独验收。
 
 交付扫描186个已跟踪文件、5项本地配置敏感值，密钥匹配与禁止文件均为0，报告 delivery-secret-scan.json。凭据、数据库、原始协议、验收材料继续被Git忽略；README、用户现有AGENTS.md和其他无关未跟踪文件未纳入本次提交。
+
+## 2026-10-20 以阅读为中心的前端改版
+
+用户已批准五步方案并授权本轮连续完成。今日简报、历史简报、订阅设置成为独立入口，账户菜单提供资料和退出。暖白/墨绿电子报排版将正文置于760像素阅读区；默认展示摘要、话题和来源域名，引用依据可展开，必要时间说明与待核实信息保持可见。日期按北京时间计算，旧简报保留实际生成日期。前端使用原有HTML/CSS/JavaScript与固定资源路由，后端业务、API、数据库、凭据、规则、调度和恢复保持原样；运行记录继续由后端保留，普通页面只轮询必要状态。
+
+前四步提交分别为ed6eea2（视觉/导航，20项Node及2项页面产品回归）、5eeea77（阅读/来源，23项Node）、21863ea（生成与阅读保护，24项Node）、5c96820（历史/设置，33项Node），均已同步GitHub。第三步首次Git操作因自动审批服务用量限制未执行，用户要求继续后重试成功；工作区内容和用户无关文件保留。第五步补齐浏览器发现的分页收回、展开长引文溢出、辅助文字对比度、账户菜单Escape关闭、首次载入状态及会话刷新边界。
+
+最终Node前端37项通过，报告frontend-state-redesign-20261020.log；新增和调整测试覆盖来源转义/链接、时间缺项、待核实单独交付、生成防重与中断、迟到响应、跨账户清理、CSRF刷新账户变化、分页/日期分组、详情路由和返回位置。相关Python回归133 passed、48.11秒，涵盖test_pages.py、test_auth.py、test_product_api.py、test_stage_four.py、test_verification_display.py、test_delivery.py，报告tests-frontend-redesign-final-20261020.xml与同名log。Ruff检查与154个Python文件格式检查通过；本轮针对前端改动执行相关回归，先前完整后端验收作为历史记录保留。
+
+真实本地实例完成旧简报读取、引用键盘展开、历史前进后退与返回位置、偏好草稿跨页面保留和相同偏好保存。独立localhost:8766实例使用显式fixture材料和本地测试邮件服务，完成登录/退出/重新登录、注册模式、资料保存恢复、历史10→13条分页、详情刷新、生成成功与主动打开。后续生成完成时，已展开14条历史仍为14条，仅提示有新简报可刷新，旧正文与浏览位置不被替换。未向真实邮箱发信，未把测试材料写入用户数据卷。
+
+响应式检查采用320、375、1280像素视口，对应可用宽度305、360、1265；长标题和展开长引文均无横向溢出，320像素下长引文宽263。恶意HTML样式文本未生成img节点，必要说明可见，原文链接保留noopener/noreferrer，辅助文字对比度4.89:1，浏览器控制台无错误。证据frontend-browser-audit-20261020.json及本轮页面截图保存在忽略目录。最终默认页面仍使用用户原有数据。
+
+真实服务本轮预览run_id=6d075e39-9f9a-4be2-bd8e-73f4785d07e7因model_incomplete_response停止，未保存新简报；页面保留旧内容并恢复重新生成按钮，显示简短中断提示。成功交互由上述独立替身补验，不把这次真实新闻生成记为通过；后台模型完整响应问题单独保留。本轮范围为前端改版，未调整模型、核对或后端预算规则。
+
+交付镜像sha256:5ca17fc924b2abea3f944b41ccff6f0b11ee63b2a0be2b3e2446785312652e01，API/Worker均healthy。三份静态资源在工作区、容器与实际HTTP响应中的SHA256一致，主页、健康、JS、CSS与图标均200；与改版前提交c50323e比较，app目录只变更app/static内三个文件。原daily-ai-news-data卷保留，凭据未修改，报告final-frontend-instance-20261020.json。页面截图frontend-reading-desktop-20261020.jpg、frontend-today-desktop-20261020.jpg、frontend-history-desktop-20261020.jpg可供review；临时响应式尺寸已清除。
+
+最终交付扫描186个已跟踪文件和5项本地敏感配置，密钥匹配、禁止跟踪文件均为0；git diff --check和前端Prettier格式检查通过。README与用户现有AGENTS.md改动保持原样，无关未跟踪文件未纳入提交。

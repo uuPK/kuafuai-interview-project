@@ -5,9 +5,10 @@
   background: #f8f8f4;
   font-synthesis: none;
   line-height: 1.75;
+  overflow-wrap: anywhere;
   --green: #193d32;
   --line: #dddfd7;
-  --muted: #737970;
+  --muted: #65705f;
   --paper: #fff;
   scroll-behavior: smooth;
 }
@@ -23,6 +24,7 @@ body {
 a {
   color: var(--green);
   text-underline-offset: 4px;
+  overflow-wrap: anywhere;
 }
 button,
 input,
@@ -292,6 +294,10 @@ main {
   text-decoration: none;
   white-space: nowrap;
 }
+.subscription-strip > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .edition-note {
   font-size: 0.8rem;
   color: var(--muted);
@@ -357,7 +363,7 @@ main {
 .news-number {
   font-family: Georgia, serif;
   font-size: 0.9rem;
-  color: #8a9a84;
+  color: #62745b;
   letter-spacing: 0.08em;
 }
 .news-topics {
@@ -472,6 +478,9 @@ main {
   margin: 1.5rem 0 0;
 }
 .generation-status {
+  position: sticky;
+  top: 1rem;
+  z-index: 3;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -543,7 +552,7 @@ main {
 .badge {
   font-size: 0.7rem;
   white-space: nowrap;
-  color: #6d7d68;
+  color: #586d54;
   border: 1px solid #d8dfd1;
   padding: 0.15rem 0.5rem;
   border-radius: 3px;

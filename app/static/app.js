@@ -122,6 +122,7 @@ export function runFailureText(run) {
     FETCH_TOO_LARGE: "正文来源超过下载大小限制，本次未能取得证据。",
   };
   const reasons = {
+    model_incomplete_response: "本次生成中断，未保存新的简报，请稍后重新生成。",
     brief_revision_exhausted: "稿件两次提交检查均未通过，请稍后重新生成。",
     brief_review_service_failed: "稿件核对服务暂不可用，请稍后重新生成。",
     model_dependency_configuration: "模型服务配置不完整，请维护者检查配置。",
@@ -290,7 +291,7 @@ function reset(user = null) {
   $("open-generated").hidden = true;
   $("retry-status").hidden = true;
   $("generation-text").textContent = "";
-  $("today-empty").hidden = false;
+  $("today-empty").hidden = !!user;
   $("edition-note").textContent = "";
   state.pollingView = null;
   state.ids = { briefs: new Set() };
@@ -302,6 +303,7 @@ function reset(user = null) {
   state.historyScroll = 0;
   state.selectedArchive = null;
   $("more-briefs").hidden = true;
+  $("refresh-briefs").textContent = "刷新记录";
   $("topic-summary").textContent = "为你关注的话题整理";
   $("subscription-draft").textContent = "";
   $("profile-draft").textContent = "";
@@ -372,7 +374,11 @@ async function request(path, { method = "GET", body } = {}) {
       state.csrf = null;
       notice("登录已过期，请重新登录。", true);
     }
-    if (code === "CSRF_REJECTED") await session(false);
+    if (code === "CSRF_REJECTED") {
+      await session(false);
+      if (epoch !== state.epoch)
+        throw new DOMException("stale session", "AbortError");
+    }
     throw new Error(messageFor(code));
   }
   return data;
@@ -417,6 +423,7 @@ async function showLatest() {
     updateGenerateButton();
     return;
   }
+  $("today-empty").hidden = true;
   await showBrief(state.latestBrief.brief_id);
 }
 async function loadSubscription() {
@@ -464,6 +471,7 @@ async function loadList(kind, fresh = false) {
       state.archiveDate = null;
       $(kind).replaceChildren();
       state.latestBrief = data.items[0] || null;
+      $("refresh-briefs").textContent = "刷新记录";
       updateGenerateButton();
     }
     state.archiveLoaded = true;
@@ -518,6 +526,13 @@ function generationText(text, error = false) {
   $("generation-status").hidden = false;
   $("generation-status").dataset.error = String(error);
   $("generation-text").textContent = text;
+}
+async function refreshLatest() {
+  const data = await request("/briefs?limit=1");
+  state.latestBrief = data.items[0] || state.latestBrief;
+  updateGenerateButton();
+  if (state.latestBrief && !state.ids.briefs.has(state.latestBrief.brief_id))
+    $("refresh-briefs").textContent = "有新简报 · 刷新";
 }
 async function restoreGeneration() {
   const data = await request("/runs?limit=10");
@@ -594,7 +609,7 @@ async function poll(view) {
         !state.readyBrief,
       );
       try {
-        await loadList("briefs", true);
+        await refreshLatest();
       } catch (e) {
         if (e.name !== "AbortError") notice(e.message, true);
       }
@@ -824,6 +839,12 @@ async function mailStatus(id, mode, view) {
 }
 function authMode(mode) {
   state.mode = mode;
+  $("auth-heading").textContent =
+    mode === "register" ? "开启每日阅读" : "欢迎回来";
+  $("auth-intro").textContent =
+    mode === "register"
+      ? "创建账户，订阅你关注的 AI 进展。"
+      : "登录，开始今天的阅读。";
   $("nickname-field").hidden = mode !== "register";
   $("auth-form").elements.nickname.required = mode === "register";
   $("auth-form").elements.password.autocomplete =
@@ -838,6 +859,12 @@ function authMode(mode) {
 async function boot() {
   window.addEventListener("hashchange", () => {
     route();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && $("account-bar").open) {
+      $("account-bar").open = false;
+      $("account-bar").querySelector("summary").focus();
+    }
   });
   $("login-tab").addEventListener("click", () => authMode("login"));
   $("register-tab").addEventListener("click", () => authMode("register"));
@@ -920,6 +947,7 @@ async function boot() {
       if (!id) return;
       await navigate("#brief/" + encodeURIComponent(id));
       $("open-generated").hidden = true;
+      $("generation-status").hidden = true;
     }),
   );
   for (const kind of ["briefs"]) {

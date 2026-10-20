@@ -99,6 +99,10 @@ test("unknown server codes never become raw UI text", () => {
 
 test("task failures explain saved source failures before submission exhaustion", () => {
   assert.match(
+    runFailureText({ stop_reason: "model_incomplete_response" }),
+    /生成中断/,
+  );
+  assert.match(
     runFailureText({
       stop_reason: "brief_revision_exhausted",
       source_error_code: "PUBLIC_ADDRESS_BLOCKED",
