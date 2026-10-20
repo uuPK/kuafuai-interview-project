@@ -7,7 +7,6 @@ import {
   session,
   emptyPage,
   runRecord,
-  eventPage,
   brief,
 } from "./frontend_support.mjs";
 
@@ -133,55 +132,66 @@ test("final rejected reviews show an explicit unverified delivery banner", async
   assert.match(text, /数字冲突/);
 });
 
-test("late terminal task events cannot open its brief after selecting another task", async () => {
-  const slowEvents = deferred();
+test("a stale generation response cannot replace the state of a newer request", async () => {
+  const slowRun = deferred();
   const ui = harness((path) => {
     if (path === "/auth/session") return session;
-    if (path === "/runs/A") return runRecord("completed", "brief-A");
+    if (path === "/runs/A") return slowRun.promise;
     if (path === "/runs/B") return runRecord();
-    if (path.startsWith("/runs/A/events")) return slowEvents.promise;
-    if (path.startsWith("/runs/B/events")) return eventPage(2);
     if (path === "/briefs/brief-A") return brief("旧任务 A 简报");
     return emptyPage;
   });
   const first = ui.run("selectRun('A')");
-  await until(() => ui.calls.some((path) => path.startsWith("/runs/A/events")));
+  await until(() => ui.calls.includes("/runs/A"));
   await ui.run("selectRun('B')");
-  slowEvents.resolve(eventPage());
+  slowRun.resolve(runRecord("completed", "brief-A"));
   await first;
-  assert.equal(ui.get("run-state").textContent, "研究中");
+  assert.match(ui.get("generation-text").textContent, /正在整理新闻/);
   assert.equal(ui.get("brief-panel").hidden, true);
   assert.equal(ui.calls.includes("/briefs/brief-A"), false);
 });
 
-test("a late task completion preserves a manually selected historical brief", async () => {
-  const slowEvents = deferred();
+test("a completed generation offers its new result without replacing the article being read", async () => {
+  const slowRun = deferred();
   const ui = harness((path) => {
     if (path === "/auth/session") return session;
-    if (path === "/runs/A") return runRecord("completed", "brief-A");
-    if (path.startsWith("/runs/A/events")) return slowEvents.promise;
+    if (path === "/runs/A") return slowRun.promise;
     if (path.startsWith("/briefs/brief-"))
       return brief(path.endsWith("A") ? "自动简报 A" : "手动选择 B");
     return emptyPage;
   });
   const polling = ui.run("selectRun('A')");
-  await until(() => ui.calls.some((path) => path.startsWith("/runs/A/events")));
+  await until(() => ui.calls.includes("/runs/A"));
   await ui.run("showBrief('brief-B')");
-  slowEvents.resolve(eventPage());
+  slowRun.resolve(runRecord("completed", "brief-A"));
   await polling;
   assert.equal(ui.get("brief-title").textContent, "手动选择 B");
+  assert.equal(ui.get("open-generated").hidden, false);
+  assert.equal(ui.run("state.readyBrief"), "brief-A");
+  assert.equal(
+    ui.calls.some((path) => path.includes("/events")),
+    false,
+  );
 });
 
-test("polling and load-more cannot append the same event page twice", async () => {
-  const slowEvents = deferred();
-  const ui = harness(() => slowEvents.promise);
-  ui.run("state.run='A'; state.view=1");
-  const first = ui.run("events(1)");
-  const second = ui.run("events(1)");
-  slowEvents.resolve(eventPage());
+test("duplicate generate clicks submit only once and preserve the previous article", async () => {
+  const pending = deferred();
+  const ui = harness((path) =>
+    path === "/runs"
+      ? pending.promise
+      : path === "/auth/session"
+        ? session
+        : runRecord(),
+  );
+  ui.get("brief-title").textContent = "已有简报";
+  const first = ui.run("generatePreview()");
+  const second = ui.run("generatePreview()");
+  assert.equal(ui.get("preview").disabled, true);
+  pending.resolve({ run_id: "A", reused: true });
   await Promise.all([first, second]);
-  assert.equal(ui.get("events").children.length, 1);
-  assert.equal(ui.run("state.after"), 1);
+  assert.equal(ui.calls.filter((path) => path === "/runs").length, 1);
+  assert.equal(ui.get("brief-title").textContent, "已有简报");
+  assert.equal(ui.get("preview").disabled, true);
 });
 
 test("visibility refresh does not start overlapping polling of one task", async () => {
@@ -189,7 +199,7 @@ test("visibility refresh does not start overlapping polling of one task", async 
   const ui = harness((path) => {
     if (path === "/auth/session") return session;
     if (path === "/runs/A") return slowRun.promise;
-    return eventPage();
+    return emptyPage;
   });
   ui.run("state.run='A'; state.view=1");
   const first = ui.run("poll(1)");
@@ -205,7 +215,7 @@ test("a stale network failure cannot overwrite logout feedback", async () => {
   const pending = deferred();
   const ui = harness(() => pending.promise);
   const action = ui.run(
-    "action(document.createElement('button'), () => loadList('runs',true))",
+    "action(document.createElement('button'), () => loadList('briefs',true))",
   );
   ui.run("reset(); notice('已退出登录。')");
   pending.reject(new TypeError("fixture connection lost"));
@@ -221,7 +231,7 @@ test("an expired session shows the specific login prompt and clears private data
   }));
   ui.get("brief-title").textContent = "旧用户的私有标题";
   await ui.run(
-    "action(document.createElement('button'), () => loadList('runs',true))",
+    "action(document.createElement('button'), () => loadList('briefs',true))",
   );
   assert.equal(ui.get("notice").textContent, "登录已过期，请重新登录。");
   assert.equal(ui.get("brief-title").textContent, "");
@@ -236,7 +246,7 @@ test("a stale JSON decoding failure cannot overwrite the next account's feedback
     json: () => decoding.promise,
   }));
   const action = ui.run(
-    "action(document.createElement('button'), () => loadList('runs',true))",
+    "action(document.createElement('button'), () => loadList('briefs',true))",
   );
   await until(() => ui.calls.length === 1);
   await new Promise((resolve) => setImmediate(resolve));
@@ -249,17 +259,35 @@ test("a stale JSON decoding failure cannot overwrite the next account's feedback
   assert.equal(ui.get("greeting").textContent, "下一用户");
 });
 
-test("an events error releases its in-flight guard so the user can retry", async () => {
+test("a generation connection failure can resume polling without submitting a second task", async () => {
   let failed = true;
-  const ui = harness(() => {
+  const ui = harness((path) => {
+    if (path === "/auth/session") return session;
     if (failed) throw new TypeError("fixture offline");
-    return eventPage();
+    return runRecord();
   });
   ui.run("state.run='A'; state.view=1");
-  await assert.rejects(ui.run("events(1)"), /连接暂时失败/);
+  await ui.run("poll(1)");
+  assert.equal(ui.get("retry-status").hidden, false);
   failed = false;
-  await ui.run("events(1)");
-  assert.equal(ui.get("events").children.length, 1);
+  await ui.run("poll(1)");
+  assert.equal(ui.get("retry-status").hidden, true);
+  assert.equal(ui.calls.includes("/runs"), false);
+});
+
+test("failed generation re-enables regeneration and never clears the saved article", async () => {
+  const ui = harness((path) =>
+    path === "/auth/session"
+      ? session
+      : path === "/runs/A"
+        ? { ...runRecord("failed"), stop_reason: "brief_revision_exhausted" }
+        : emptyPage,
+  );
+  ui.get("brief-title").textContent = "仍可阅读";
+  await ui.run("selectRun('A')");
+  assert.equal(ui.get("preview").disabled, false);
+  assert.match(ui.get("generation-text").textContent, /重新生成/);
+  assert.equal(ui.get("brief-title").textContent, "仍可阅读");
 });
 
 test("late mail status after logout cannot restore private content or polling", async () => {

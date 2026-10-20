@@ -1,7 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const labels = {
   queued: "排队中",
-  running: "研究中",
+  running: "正在生成",
   waiting_retry: "等待重试",
   completed: "已完成",
   no_news: "暂无已核实新闻",
@@ -97,8 +97,7 @@ export function runFailureText(run) {
     FETCH_TOO_LARGE: "正文来源超过下载大小限制，本次未能取得证据。",
   };
   const reasons = {
-    brief_revision_exhausted:
-      "稿件两次提交检查均未通过，请查看下方检查反馈后重新生成。",
+    brief_revision_exhausted: "稿件两次提交检查均未通过，请稍后重新生成。",
     brief_review_service_failed: "稿件核对服务暂不可用，请稍后重新生成。",
     model_dependency_configuration: "模型服务配置不完整，请维护者检查配置。",
     model_dependency_authentication: "模型服务认证失败，请维护者检查凭据。",
@@ -113,7 +112,7 @@ export function runFailureText(run) {
   return (
     sources[run.source_error_code] ||
     reasons[run.stop_reason] ||
-    "本次研究未完成，请查看下方行动与反馈，或联系维护者。"
+    "本次简报未能生成，请稍后重试，或联系维护者。"
   );
 }
 export function mailText(mail) {
@@ -145,6 +144,8 @@ function node(tag, text, cls) {
 const state = {
   page: "today",
   latestBrief: null,
+  generating: false,
+  readyBrief: null,
   user: null,
   csrf: null,
   epoch: 0,
@@ -156,10 +157,6 @@ const state = {
   listView: { runs: 0, briefs: 0 },
   timer: null,
   mailTimer: null,
-  after: 0,
-  eventsMore: false,
-  eventPage: null,
-  eventIDs: new Set(),
   pollingView: null,
   cursors: { runs: null, briefs: null },
   ids: { runs: new Set(), briefs: new Set() },
@@ -203,24 +200,19 @@ function reset(user = null) {
   state.user = user;
   state.run = null;
   state.latestBrief = null;
+  state.generating = false;
+  state.readyBrief = null;
+  $("generation-status").hidden = true;
+  $("open-generated").hidden = true;
+  $("retry-status").hidden = true;
+  $("generation-text").textContent = "";
   $("today-empty").hidden = false;
   $("edition-note").textContent = "";
-  state.after = 0;
-  state.eventPage = null;
-  state.eventIDs.clear();
   state.pollingView = null;
   state.ids = { runs: new Set(), briefs: new Set() };
   state.cursors = { runs: null, briefs: null };
-  for (const id of [
-    "runs",
-    "briefs",
-    "events",
-    "progress",
-    "brief-content",
-    "mail-panel",
-  ])
+  for (const id of ["briefs", "brief-content", "mail-panel"])
     $(id).replaceChildren();
-  $("run-panel").hidden = true;
   $("brief-panel").hidden = true;
   $("dashboard").hidden = !user;
   $("account-bar").hidden = !user;
@@ -230,14 +222,7 @@ function reset(user = null) {
   $("subscription-form").reset();
   $("auth-form").reset();
   $("schedule").textContent = "";
-  for (const id of [
-    "greeting",
-    "brief-title",
-    "brief-meta",
-    "run-window",
-    "run-reason",
-    "run-state",
-  ])
+  for (const id of ["greeting", "brief-title", "brief-meta", "brief-count"])
     $(id).textContent = "";
   if (user) {
     $("greeting").textContent = user.nickname;
@@ -245,6 +230,7 @@ function reset(user = null) {
       $("profile-form").elements[key].value = user[key];
   }
   setPage("today");
+  updateGenerateButton();
 }
 async function request(path, { method = "GET", body } = {}) {
   const epoch = state.epoch;
@@ -320,8 +306,8 @@ async function action(button, fn) {
 async function loadDashboard() {
   await Promise.all([
     loadSubscription(),
-    loadList("runs", true),
     loadList("briefs", true),
+    restoreGeneration(),
   ]);
   if (state.page === "today") await showLatest();
 }
@@ -411,70 +397,55 @@ async function loadList(kind, fresh = false) {
   state.cursors[kind] = data.next_cursor;
   $("more-" + kind).hidden = !data.next_cursor;
 }
-function progressBlock(title, items) {
-  const section = node("section");
-  section.append(node("h3", title));
-  const ul = node("ul");
-  for (const text of items || []) ul.append(node("li", text));
-  if (!ul.childNodes.length) ul.append(node("li", "尚无记录"));
-  section.append(ul);
-  return section;
+function updateGenerateButton() {
+  $("preview").disabled = state.generating;
+  $("preview").textContent = state.generating
+    ? "正在生成…"
+    : state.latestBrief
+      ? "重新生成 ↗"
+      : "生成预览 ↗";
+}
+function generationText(text, error = false) {
+  $("generation-status").hidden = false;
+  $("generation-status").dataset.error = String(error);
+  $("generation-text").textContent = text;
+}
+async function restoreGeneration() {
+  const data = await request("/runs?limit=10");
+  const active = data.items.find((item) =>
+    ["queued", "running", "waiting_retry"].includes(item.status),
+  );
+  if (active) await selectRun(active.id);
+}
+async function generatePreview() {
+  if (state.generating) return;
+  const epoch = state.epoch;
+  state.generating = true;
+  state.readyBrief = null;
+  $("open-generated").hidden = true;
+  $("retry-status").hidden = true;
+  updateGenerateButton();
+  generationText("正在准备新一期简报，你可以继续阅读已有内容。");
+  try {
+    const data = await request("/runs", { method: "POST", body: {} });
+    await selectRun(data.run_id);
+  } catch (e) {
+    if (epoch !== state.epoch || e.name === "AbortError") return;
+    state.generating = false;
+    updateGenerateButton();
+    generationText(e.message, true);
+  }
 }
 async function selectRun(id) {
   cancelPoll();
   state.run = id;
   state.view++;
-  state.after = 0;
-  state.eventIDs.clear();
-  $("more-events").hidden = true;
-  $("events").replaceChildren();
-  $("run-panel").hidden = false;
+  state.generating = true;
+  state.readyBrief = null;
+  $("open-generated").hidden = true;
+  updateGenerateButton();
   const view = state.view;
   await poll(view);
-  if (view === state.view && state.user)
-    $("run-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
-}
-async function events(view) {
-  if (view !== state.view || state.eventPage?.view === view) return;
-  const pageRequest = { view };
-  state.eventPage = pageRequest;
-  try {
-    const page = await request(
-      `/runs/${encodeURIComponent(state.run)}/events?after_id=${state.after}&limit=50`,
-    );
-    if (view !== state.view) return;
-    for (const event of page.events) {
-      if (state.eventIDs.has(event.id)) continue;
-      state.eventIDs.add(event.id);
-      const li = node("li");
-      li.append(
-        node("strong", event.summary),
-        node("small", localTime(event.occurred_at)),
-      );
-      const d = event.data;
-      const parts = [];
-      if (d.name) parts.push(`工具：${d.name}`);
-      if (d.parameters?.query) parts.push(`查询：${d.parameters.query}`);
-      if (d.reason) parts.push(`原因：${d.reason}`);
-      if (d.error_code) parts.push(`反馈：${d.error_code}`);
-      if (d.issues)
-        for (const issue of d.issues)
-          parts.push(
-            typeof issue === "string" ? issue : issue.issue || "检查反馈",
-          );
-      if (d.items)
-        for (const item of d.items)
-          if (item.selection_reason)
-            parts.push(`入选理由：${item.selection_reason}`);
-      if (parts.length) li.append(node("p", parts.join("\n")));
-      $("events").append(li);
-    }
-    state.after = page.next_after_id;
-    state.eventsMore = page.has_more;
-    $("more-events").hidden = !page.has_more;
-  } finally {
-    if (state.eventPage === pageRequest) state.eventPage = null;
-  }
 }
 async function poll(view) {
   if (
@@ -485,42 +456,44 @@ async function poll(view) {
   )
     return;
   state.pollingView = view;
-  const briefView = state.briefView;
   let active = true;
   try {
     await session(false);
     if (view !== state.view || !state.user) return;
     const run = await request("/runs/" + encodeURIComponent(state.run));
     if (view !== state.view) return;
-    $("run-state").textContent = labels[run.status] || run.status;
-    $("run-window").textContent =
-      `新闻窗口：${localTime(run.window_start)} — ${localTime(run.window_end)}`;
-    $("run-reason").textContent = run.stop_reason
-      ? `停止原因：${runFailureText(run)}`
-      : run.retry_at
-        ? `下次尝试：${localTime(run.retry_at)}`
-        : run.status === "queued"
-          ? "任务已排队，正在等待处理。"
-          : "";
-    $("progress").replaceChildren(
-      progressBlock("已取得材料", run.progress.collected),
-      progressBlock("待补充", run.progress.missing),
-      progressBlock("当前问题", run.progress.issues),
-    );
-    await events(view);
-    if (view !== state.view || !state.user) return;
+    $("retry-status").hidden = true;
     active = ["queued", "running", "waiting_retry"].includes(run.status);
-    if (!active) {
-      await loadList("runs", true);
-      if (view !== state.view || !state.user) return;
-      await loadList("briefs", true);
-      if (view !== state.view || !state.user) return;
-      if (run.brief_id && briefView === state.briefView)
-        await showBrief(run.brief_id);
+    state.generating = active;
+    updateGenerateButton();
+    if (active) {
+      generationText(
+        run.status === "queued"
+          ? "已排队，稍后开始生成。"
+          : run.status === "waiting_retry"
+            ? "生成暂时中断，正在等待重试。"
+            : "正在整理新闻，你可以继续阅读或翻阅历史。",
+      );
+    } else {
+      state.run = null;
+      state.readyBrief = run.brief_id || null;
+      $("open-generated").hidden = !state.readyBrief;
+      generationText(
+        state.readyBrief
+          ? "新一期简报已生成。"
+          : runFailureText(run) || "本次未能生成简报，请稍后重试。",
+        !state.readyBrief,
+      );
+      try {
+        await loadList("briefs", true);
+      } catch (e) {
+        if (e.name !== "AbortError") notice(e.message, true);
+      }
     }
   } catch (e) {
     if (e.name === "AbortError" || view !== state.view) return;
-    notice(e.message, true);
+    generationText(e.message + " 已有简报仍可阅读。", true);
+    $("retry-status").hidden = false;
   } finally {
     if (state.pollingView === view) state.pollingView = null;
   }
@@ -589,7 +562,7 @@ async function showBrief(id) {
   const content = $("brief-content");
   $("brief-count").textContent =
     `${b.document.items.length} 条新闻${b.document.unverified_items?.length ? ` · ${b.document.unverified_items.length} 条待核实` : ""}`;
-  $("preview").textContent = "重新生成 ↗";
+  updateGenerateButton();
   content.replaceChildren();
   if (b.document.review_status === "unverified")
     content.append(
@@ -754,7 +727,10 @@ async function boot() {
     if (!state.user || window.location.hash === "#main") return;
     const page = window.location.hash.slice(1);
     setPage(page === "account" ? "settings" : page);
-    if (state.page === "today") action($("preview"), () => showLatest());
+    if (state.page === "today")
+      showLatest().catch((e) => {
+        if (e.name !== "AbortError") notice(e.message, true);
+      });
     if (page === "account")
       $("account-section").scrollIntoView({ block: "start" });
   });
@@ -826,15 +802,22 @@ async function boot() {
       notice("订阅已保存，已有任务保留原偏好。");
     });
   });
-  $("preview").addEventListener("click", () =>
-    action($("preview"), async () => {
-      const data = await request("/runs", { method: "POST", body: {} });
-      notice(data.reused ? "正在查看尚未结束的预览。" : "预览任务已创建。");
-      await loadList("runs", true);
-      await selectRun(data.run_id);
+  $("preview").addEventListener("click", generatePreview);
+  $("retry-status").addEventListener("click", () => {
+    cancelPoll();
+    poll(state.view);
+  });
+  $("open-generated").addEventListener("click", () =>
+    action($("open-generated"), async () => {
+      const id = state.readyBrief;
+      if (!id) return;
+      setPage("today");
+      await showBrief(id);
+      $("open-generated").hidden = true;
+      $("brief-title").focus();
     }),
   );
-  for (const kind of ["runs", "briefs"]) {
+  for (const kind of ["briefs"]) {
     $("refresh-" + kind).addEventListener("click", () =>
       action($("refresh-" + kind), () => loadList(kind, true)),
     );
@@ -842,9 +825,6 @@ async function boot() {
       action($("more-" + kind), () => loadList(kind)),
     );
   }
-  $("more-events").addEventListener("click", () =>
-    action($("more-events"), () => events(state.view)),
-  );
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
       cancelPoll();
