@@ -12,6 +12,8 @@ Docker Engine 需要 26.0+，Compose 需要 2.24+；分别用于工具容器的 
 
 ### 1. 获取项目并生成配置
 
+当前仓库为私有仓库，其他人需先获得读取权限，并在 Git 客户端完成 GitHub 登录后克隆；`Repository not found` 或要求登录时，先确认访问权限。仓库链接不会附带部署者的密钥，运行时填写自己的服务参数。
+
 ```sh
 git clone https://github.com/uuPK/kuafuai-interview-project.git
 cd kuafuai-interview-project
