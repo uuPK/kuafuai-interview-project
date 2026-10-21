@@ -94,18 +94,27 @@ class PublishedUnverifiedItem(UnverifiedItem):
 class BriefDocument(BriefDraft):
     items: tuple[PublishedItem, ...] = Field(max_length=5)
     unverified_items: tuple[PublishedUnverifiedItem, ...] = Field(default=(), max_length=5)
-    review_status: Literal["approved", "unverified"] = "approved"
+    review_status: Literal["approved", "partial", "unverified"] = "approved"
 
     @model_validator(mode="after")
     def require_unverified_only(self):
         if self.review_status == "unverified" and (self.items or not self.unverified_items):
             raise ValueError("unverified review may deliver only nonempty original-source leads")
+        if self.review_status == "partial" and (not self.items or not self.unverified_items):
+            raise ValueError("partial review requires both reviewed news and unverified items")
         return self
+
+
+class ItemReview(ToolParameters):
+    item_index: int = Field(ge=0, le=4)
+    approved: bool
+    notes: tuple[Annotated[Text, Field(max_length=300)], ...] = Field(default=(), max_length=5)
 
 
 class ReviewOutcome(ToolParameters):
     approved: bool
     issues: tuple[ArgumentIssue, ...] = Field(max_length=10)
+    item_reviews: tuple[ItemReview, ...] | None = Field(default=None, max_length=5)
 
     @model_validator(mode="after")
     def consistent_decision(self):

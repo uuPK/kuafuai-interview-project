@@ -182,8 +182,6 @@ def test_item_schema_is_strict(brief_env, field, value):
     "field,value",
     [
         ("source_id", "src-" + "0" * 32),
-        ("start_offset", 51),
-        ("end_offset", 999999),
         ("quote", "伪造摘录"),
         ("quote", "x" * 50),
     ],
@@ -217,17 +215,31 @@ def test_citation_schema_cannot_override_server_fields(brief_env, field, value):
     assert counts(ready) == (0, 0, 0)
 
 
-def test_unique_exact_quote_returns_repair_offsets_without_accepting_wrong_range(brief_env):
+@pytest.mark.parametrize("field,value", [("start_offset", 51), ("end_offset", 999999)])
+def test_unique_exact_quote_relocates_without_mutating_original_call(brief_env, field, value):
     ready = brief_env
     reference = ready.draft["items"][0]["citations"][0]
     assert ready.body.count(reference["quote"]) == 1
-    reference["end_offset"] += 1
-    rejected = execute(ready, call_id="wrong-range")
-    assert rejected.error.code == "BRIEF_RULES_REJECTED" and not ready.reviews
-    assert "start_offset=0,end_offset=50" in rejected.error.details[0].issue
-    assert counts(ready) == (0, 0, 0)
-    reference["end_offset"] = 50
-    assert execute(ready, call_id="repaired-range").ok
+    reference[field] = value
+    original = json.loads(json.dumps(reference))
+    result = execute(ready)
+    assert result.ok and len(ready.reviews) == 1
+    document = ready.store.get(result.data["brief_id"], "user-1")["document"]
+    saved = document.items[0].citations[0]
+    assert (saved.start_offset, saved.end_offset) == (0, 50)
+    assert reference == original
+    call = ready.env.calls.get_call(ready.env.run.id, "user-1", "submit")
+    assert json.loads(call.arguments)["draft"]["items"][0]["citations"][0] == original
+    event = next(
+        e for e in ready.env.runs.list_events(ready.env.run.id, "user-1") if e.kind == "brief_saved"
+    )
+    assert (
+        event.data["citation_adjustments"][0][
+            "original_" + ("start" if field == "start_offset" else "end")
+        ]
+        == value
+    )
+    assert counts(ready) == (1, 1, 1)
     assert counts(ready) == (1, 1, 1)
 
 
@@ -569,7 +581,8 @@ def test_optional_rss_failure_does_not_block_valid_empty_search(
 def test_agent_corrects_rejected_range_and_pairs_remaining_calls(brief_env, response_factory):
     ready, env = brief_env, brief_env.env
     good = json.loads(json.dumps(ready.draft))
-    ready.draft["items"][0]["citations"][0]["end_offset"] -= 1
+    ref = ready.draft["items"][0]["citations"][0]
+    ref["quote"] = "错" + ref["quote"][1:]
     conversations = ConversationStore(env.calls)
 
     def revise(request):
@@ -725,7 +738,11 @@ def test_evidence_total_limit_and_exact_newlines(brief_env):
     ready, env = brief_env, brief_env.env
     ref = ready.draft["items"][0]["citations"][0]
     ref["end_offset"] = len(ref["quote"].encode("utf-8"))
-    assert execute(ready, call_id="byte-offset").error.code == "BRIEF_RULES_REJECTED"
+    context = bind_context(env.runs, env.settings.data_dir, env.run.id, "user-1")
+    _, rejected = ready.store.rules.check(
+        context, BriefDraft.model_validate_json(json.dumps(ready.draft)), auto_locate=False
+    )
+    assert rejected.error.code == "BRIEF_RULES_REJECTED"
     ref["end_offset"] = 50
     ready.store.rules.settings = env.settings.model_copy(update={"max_material_scan_bytes": 1})
     assert execute(ready).error.code == "BRIEF_EVIDENCE_TOO_LARGE"
@@ -789,7 +806,16 @@ def test_staging_reuses_identity_and_cannot_change_review_basis(brief_env):
         env.runs, env.settings.data_dir, env.run.id, "user-1", tool_call_id="submit"
     )
     draft = BriefDraft.model_validate_json(json.dumps(ready.draft))
-    assert ready.store.stage(context, draft, ready.reviews[0], "fixture") == result
+    assert (
+        ready.store.stage(
+            context,
+            draft,
+            ready.reviews[0],
+            "fixture",
+            review_outcome=ReviewOutcome(approved=True, issues=()),
+        )
+        == result
+    )
     with pytest.raises(ToolFailure):
         ready.store.stage(context, draft, ready.reviews[0], "independent")
     wrong_call = bind_context(

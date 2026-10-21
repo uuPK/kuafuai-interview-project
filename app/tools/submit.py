@@ -43,6 +43,7 @@ class SubmissionTool:
                         self.review_basis,
                         fallback_document=fallback,
                         review_issues=outcome.issues,
+                        review_outcome=outcome,
                     )
             candidates = {source.source_id: source.candidate_id for source in checked.sources}
             mapping = "；".join(
@@ -56,7 +57,9 @@ class SubmissionTool:
                 "移入unverified_items，填写candidate_id、中文summary、订阅topics和原因，补齐未覆盖话题与条数说明。"
                 "仅有待核实候选也可提交。候选对应：" + mapping,
             )
-        return self.store.stage(context, parameters.draft, checked, self.review_basis)
+        return self.store.stage(
+            context, parameters.draft, checked, self.review_basis, review_outcome=outcome
+        )
 
 
 def submission_completion(result):
@@ -78,7 +81,10 @@ def register_submission(registry, store, *, reviewer=None, review_basis="indepen
             "每个话题须有入选条目或uncovered_topics中的topic/reason；条数不足时提供shortfall_reason。"
             "空简报须先有有效搜索/RSS结果，依赖或材料失败不能当作无新闻。"
             "服务端检查归属、时间、哈希和排除词并生成链接；主新闻须独立核对通过。"
-            "第二次事实核对仍拒绝时，保留简介、核对问题与原文链接，明确标为待核实；不计主新闻或已确认事实历史。",
+            "单篇可读原文可作报道依据，厂商声明须明确归因；时间缺项可标注。"
+            "完整quote唯一匹配正文时可自动纠正偏移并留痕。"
+            "第二次事实核对仍有问题时，逐条保留明确通过的新闻；仅将有问题的条目单列待核实，"
+            "保留简介、核对问题与原文链接，不计主新闻或已确认事实历史。",
             SubmitParameters,
             tool.submit,
             completion_status=submission_completion,

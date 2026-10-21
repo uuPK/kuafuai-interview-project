@@ -729,6 +729,14 @@ async function showBrief(id) {
     `${b.document.items.length} 条新闻${b.document.unverified_items?.length ? ` · ${b.document.unverified_items.length} 条待核实` : ""}`;
   updateGenerateButton();
   content.replaceChildren();
+  if (b.document.review_status === "partial")
+    content.append(
+      node(
+        "p",
+        "已保留通过原文核对的新闻；仍有疑点的条目单列在待核实信息中。",
+        "verification-note",
+      ),
+    );
   if (b.document.review_status === "unverified")
     content.append(
       node(

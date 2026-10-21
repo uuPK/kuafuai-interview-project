@@ -19,6 +19,7 @@ class CheckedBrief:
     document: BriefDocument
     sources: tuple[SourceMetadata, ...]
     duplicate_hints: tuple[dict, ...]
+    citation_adjustments: tuple[dict, ...] = ()
 
 
 class BriefRules:
@@ -26,7 +27,7 @@ class BriefRules:
         self.sources, self.settings = sources, settings
         self.redactor = Redactor(settings)
 
-    def check(self, context, draft, *, enrich_pending=True):
+    def check(self, context, draft, *, enrich_pending=True, auto_locate=True):
         run = self.sources.runs.get_run(context.run_id, context.user_id)
         problems = []
 
@@ -58,6 +59,7 @@ class BriefRules:
         if any(word in draft.title.casefold() for word in exclusions):
             issue("draft.title", "简报标题命中排除关键词")
         loaded, published, used, scanned = {}, [], {}, 0
+        adjustments = []
         for i, item in enumerate(draft.items):
             citations, seen, notes = [], set(), []
             item_text = "\n".join(
@@ -103,9 +105,36 @@ class BriefRules:
                     continue
                 if note and note not in notes:
                     notes.append(note)
-                if not 0 <= citation.start_offset < citation.end_offset <= len(body):
-                    issue(field, "引用范围须为正文内非空字符区间[start_offset,end_offset)")
-                    continue
+                in_range = 0 <= citation.start_offset < citation.end_offset <= len(body)
+                if (
+                    not in_range
+                    or body[citation.start_offset : citation.end_offset] != citation.quote
+                ):
+                    exact_start = body.find(citation.quote)
+                    if (
+                        auto_locate
+                        and exact_start >= 0
+                        and body.find(citation.quote, exact_start + 1) < 0
+                    ):
+                        adjustments.append(
+                            {
+                                "field": field,
+                                "source_id": meta.source_id,
+                                "original_start": citation.start_offset,
+                                "original_end": citation.end_offset,
+                                "start_offset": exact_start,
+                                "end_offset": exact_start + len(citation.quote),
+                            }
+                        )
+                        citation = citation.model_copy(
+                            update={
+                                "start_offset": exact_start,
+                                "end_offset": exact_start + len(citation.quote),
+                            }
+                        )
+                    elif not in_range:
+                        issue(field, "引用范围须为正文内非空字符区间[start_offset,end_offset)")
+                        continue
                 if body[citation.start_offset : citation.end_offset] != citation.quote:
                     actual = body[citation.start_offset : citation.end_offset]
                     mismatch = next(
@@ -222,7 +251,9 @@ class BriefRules:
         document = BriefDocument(
             **{**draft.model_dump(), "items": tuple(published), "unverified_items": tuple(pending)}
         )
-        return CheckedBrief(document, tuple(meta for meta, _ in loaded.values()), hints), None
+        return CheckedBrief(
+            document, tuple(meta for meta, _ in loaded.values()), hints, tuple(adjustments)
+        ), None
 
     def pending_summary(self, context, candidate, url):
         """Use owned saved material only; excerpt fallback is explicitly unverified."""
@@ -234,8 +265,8 @@ class BriefRules:
             with self.sources.database.connection() as connection:
                 row = connection.execute(
                     "SELECT id FROM sources WHERE run_id=? "
-                    "AND json_extract(metadata_json,'$.candidate_id')=? AND url=? LIMIT 1",
-                    (context.run_id, candidate.candidate_id, url),
+                    "AND json_extract(metadata_json,'$.candidate_id')=? ORDER BY id LIMIT 1",
+                    (context.run_id, candidate.candidate_id),
                 ).fetchone()
             if row is None:
                 return None

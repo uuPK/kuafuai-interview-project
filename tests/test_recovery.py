@@ -236,7 +236,7 @@ def test_saved_review_recovers_without_new_model_request(
             )
             original = world.briefs.stage
             monkeypatch.setattr(
-                world.briefs, "stage", lambda *args: (_ for _ in ()).throw(Interrupted())
+                world.briefs, "stage", lambda *args, **kwargs: (_ for _ in ()).throw(Interrupted())
             )
             store, old = claim(env)
             with execution_scope(store.execution(old)):

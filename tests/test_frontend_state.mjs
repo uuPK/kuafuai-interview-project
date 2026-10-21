@@ -80,6 +80,35 @@ test("pending-only briefs never claim there were no candidates", async () => {
   );
 });
 
+test("partial briefs keep normal news, source notes and pending summaries visibly separate", async () => {
+  const value = brief("混合简报");
+  value.document.review_status = "partial";
+  value.document.items = [
+    {
+      title: "有原文依据的新闻",
+      summary: "厂商称模型性能提升。",
+      selection_reason: "与订阅话题相关",
+      verification_notes: ["厂商披露，尚未独立复现"],
+      citations: [{ url: "https://example.com/main", quote: "原文事实" }],
+    },
+  ];
+  value.document.unverified_items = [
+    {
+      title: "待核实新闻",
+      summary: "报道声称性能提高，数字有冲突。",
+      reason: "数字与正文不一致",
+      url: "https://example.com/pending",
+    },
+  ];
+  const ui = harness(() => value);
+  await ui.run("showBrief('brief-A')");
+  const content = ui.get("brief-content");
+  assert.match(content.children[0].textContent, /已保留通过原文核对/);
+  assert.match(content.children[1].textContent, /厂商披露，尚未独立复现/);
+  assert.match(content.children[2].textContent, /待核实信息.*报道声称性能提高/);
+  assert.equal(ui.get("brief-count").textContent, "1 条新闻 · 1 条待核实");
+});
+
 test("news reading keeps warnings visible while evidence is collapsed and original links deduplicate", () => {
   const ui = harness(() => emptyPage);
   const article = ui.run(

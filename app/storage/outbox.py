@@ -52,6 +52,8 @@ def render_message(run, document, *, recipient=None):
     ]
     if document.review_status == "unverified":
         lines.append("最终事实核对仍有问题，本次仅交付待核实原文线索，未确认任何主新闻。")
+    elif document.review_status == "partial":
+        lines.append("已保留通过原文核对的新闻；仍有疑点的条目单列在待核实信息中。")
     if not document.items:
         lines.append(
             "本次尚无可确认的主新闻，以下候选仍待核实。"

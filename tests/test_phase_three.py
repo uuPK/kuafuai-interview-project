@@ -54,6 +54,10 @@ def test_revision_saved_response_restart_then_unique_scheduled_delivery(
             else:
                 bad["items"][0]["citations"][0]["start_offset"] += 1
                 bad["items"][0]["citations"][0]["end_offset"] += 1
+                # A changed quote still needs model repair; unique unchanged anchors
+                # are now relocated automatically and have their own regression.
+                citation = bad["items"][0]["citations"][0]
+                citation["quote"] = "错" + citation["quote"][1:]
             seed(env, response_factory(("bad", "submit_brief", {"draft": bad})))
             ref = good["items"][0]["citations"][0]
             path = f"sources/{ref['source_id']}/body.txt"

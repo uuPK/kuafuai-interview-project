@@ -98,13 +98,21 @@ def test_real_discovery_provider(provider):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("topic", ["开源模型", "AI芯片", "AI应用", "AI工程", "机器人"])
-def test_real_research_and_source_citations(topic):
+@pytest.mark.parametrize(
+    "topic,max_items",
+    [(topic, 1) for topic in ("开源模型", "AI芯片", "AI应用", "AI工程", "机器人")]
+    + [("AI模型与工程", 5)],
+)
+def test_real_research_and_source_citations(topic, max_items):
     async def scenario():
         config = configured("research")
+        if max_items > 1:
+            config = config.model_copy(update={"deepseek_max_tokens": 4096})
         report = {
             "scope": "real model, search and public sources; preview only, no email",
             "topic": topic,
+            "max_items": max_items,
+            "max_response_tokens": config.deepseek_max_tokens,
         }
         started = time.monotonic()
         async with open_runtime(config) as runtime:
@@ -116,7 +124,7 @@ def test_real_research_and_source_citations(topic):
                         nickname="真实研究验收",
                         email="fixture@example.com",
                         topics=(topic,),
-                        max_items=1,
+                        max_items=max_items,
                     ),
                 )
             )
@@ -186,7 +194,9 @@ def test_real_research_and_source_citations(topic):
                 save(config, report)
             assert done.status == "completed", f"{done.status}: {done.stop_reason}; report saved"
             document = report["brief"]["document"]
-            assert len(document["items"]) == 1
+            assert 1 <= len(document["items"]) <= max_items
+            if len(document["items"]) < max_items:
+                assert document["shortfall_reason"]
             assert report["brief"]["review_basis"] == "independent"
             citations_checked, noted_items = 0, 0
             for item in document["items"]:

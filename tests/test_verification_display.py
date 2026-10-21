@@ -52,6 +52,34 @@ def test_pending_intro_is_frozen_in_document_and_mail_without_confirmed_history(
     assert "简介尚未核实：" + item.summary in mail.body_text
 
 
+def test_pending_excerpt_survives_validated_source_redirect(brief_env):
+    ready = brief_env
+    # Candidate URL remains the originally discovered address; source metadata records
+    # the validated final public URL. The excerpt is still bound by candidate and run.
+    metadata(ready, url="https://news.example.com/final", redirects=(ready.meta.url,))
+    with ready.env.database.transaction() as connection:
+        connection.execute(
+            "UPDATE sources SET url=? WHERE id=?",
+            ("https://news.example.com/final", ready.meta.source_id),
+        )
+        row = connection.execute(
+            "SELECT material_json FROM candidates WHERE id=?", (ready.meta.candidate_id,)
+        ).fetchone()
+        candidate = json.loads(row[0])
+        candidate["summary"] = None
+        candidate["snippet"] = None
+        connection.execute(
+            "UPDATE candidates SET material_json=? WHERE id=?",
+            (json.dumps(candidate), ready.meta.candidate_id),
+        )
+    ready.draft = pending_draft(ready)
+    result = execute(ready)
+    assert result.ok
+    item = ready.store.get(result.data["brief_id"], "user-1")["document"].unverified_items[0]
+    assert item.summary.startswith("原文节选（尚未核实）：")
+    assert item.url == ready.meta.url
+
+
 @pytest.mark.parametrize("case", ["excluded", "secret", "foreign_topic", "duplicate_topic"])
 def test_pending_intro_obeys_exclusions_redaction_and_topic_boundary(brief_env, case):
     from tests.test_briefs import subscription

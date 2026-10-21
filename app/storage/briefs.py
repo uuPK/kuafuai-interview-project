@@ -7,9 +7,15 @@ from uuid import uuid4
 
 from pydantic import Field
 
-from app.agent.briefs import BriefDocument, BriefDraft, PublishedUnverifiedItem, SubmitParameters
-from app.agent.research import HistoryEvent
-from app.agent.unverified import unverified_draft
+from app.agent.briefs import (
+    BriefDocument,
+    BriefDraft,
+    PublishedUnverifiedItem,
+    ReviewOutcome,
+    SubmitParameters,
+)
+from app.agent.research import HistoryEvent, HistoryReference
+from app.agent.unverified import retained_indices, review_notes, unverified_draft
 from app.harness.failures import FATAL_CATEGORIES, FailureInfo
 from app.storage.models import StateChange, StoredModel, timestamp
 from app.storage.outbox import OutboxStore
@@ -20,7 +26,7 @@ from app.tools.models import ArgumentIssue, ToolFailure, ToolInvocation, ToolRes
 
 
 class SubmissionJob(StoredModel):
-    version: Literal[1, 2] = 1
+    version: Literal[1, 2, 3] = 1
     brief_id: str = Field(pattern=r"^brief-[a-f0-9]{32}$")
     run_id: str
     tool_call_id: str
@@ -32,6 +38,7 @@ class SubmissionJob(StoredModel):
     unverified_items: tuple[PublishedUnverifiedItem, ...] = Field(default=(), max_length=5)
     fallback_document: BriefDocument | None = None
     review_issues: tuple[ArgumentIssue, ...] = Field(default=(), max_length=10)
+    review_outcome: ReviewOutcome | None = None
 
     @property
     def result(self):
@@ -43,7 +50,11 @@ class SubmissionJob(StoredModel):
                 if self.draft.items or self.draft.unverified_items
                 else "no_news",
                 "review_basis": self.review_basis,
-                **({"review_status": "unverified"} if self.fallback_document else {}),
+                **(
+                    {"review_status": self.fallback_document.review_status}
+                    if self.fallback_document
+                    else {}
+                ),
             }
         )
 
@@ -104,7 +115,11 @@ class BriefStore:
             self._problem()
 
     def _validate(self, context, job):
-        checked, rejected = self.rules.check(context, job.draft, enrich_pending=job.version >= 2)
+        if job.version >= 3 and job.review_basis == "independent" and job.review_outcome is None:
+            self._problem()
+        checked, rejected = self.rules.check(
+            context, job.draft, enrich_pending=job.version >= 2, auto_locate=job.version >= 3
+        )
         if (
             rejected is not None
             or checked.sources != job.sources
@@ -112,18 +127,83 @@ class BriefStore:
             or checked.document.unverified_items != job.unverified_items
         ):
             self._problem()
+        if job.version >= 3 and job.review_outcome is not None:
+            saved = self.saved_outcome(context, job.draft, checked)
+            if saved is None and job.review_basis == "fixture":
+                saved = job.review_outcome
+            if saved != job.review_outcome:
+                self._problem()
         if job.fallback_document is not None:
             document = self.unverified_document(
-                context, job.draft, checked, job.review_issues, include_summaries=job.version >= 2
+                context,
+                job.draft,
+                checked,
+                job.review_issues,
+                include_summaries=job.version >= 2,
+                per_item=job.version >= 3,
             )
             if document is None or document != job.fallback_document:
                 self._problem()
             checked = replace(checked, document=document)
         elif job.review_issues:
             self._problem()
+        elif job.review_outcome is not None:
+            if not job.review_outcome.approved:
+                self._problem()
+            checked = replace(checked, document=review_notes(checked.document, job.review_outcome))
         return checked
 
-    def unverified_document(self, context, draft, checked, issues, *, include_summaries=True):
+    def saved_outcome(self, context, draft, checked):
+        from app.agent.protocol import ModelResponse
+        from app.agent.review import (
+            ReviewInput,
+            ReviewInputProblem,
+            canonical_draft,
+            request_outcome,
+        )
+        from app.storage.reviews import ReviewStore
+
+        request = ReviewStore(self.calls, self.rules.settings).saved_request(context)
+        if request is None:
+            reviewer = ReviewInput(self.research, self.rules.sources, self.rules.settings)
+            try:
+                history = reviewer.related_history(context, draft)
+            except ReviewInputProblem:
+                return None
+            duplicates = reviewer.duplicate_issues(draft, history)
+            if duplicates and len(duplicates) == len(draft.items):
+                from app.agent.briefs import ItemReview
+
+                return ReviewOutcome(
+                    approved=False,
+                    issues=duplicates,
+                    item_reviews=tuple(
+                        ItemReview(item_index=i, approved=False) for i in range(len(draft.items))
+                    ),
+                )
+            return None
+        try:
+            packet = json.loads(request.messages[1].content)
+            expected = (
+                canonical_draft(draft, checked) if packet.get("review_protocol", 1) >= 2 else draft
+            )
+            saved_draft = BriefDraft.model_validate_json(json.dumps(packet["draft"]))
+        except (ValueError, TypeError, KeyError, IndexError, AttributeError):
+            self._problem()
+        if saved_draft != expected:
+            self._problem()
+        with self.database.connection() as connection:
+            row = connection.execute(
+                "SELECT response_json FROM brief_reviews WHERE run_id=? AND tool_call_id=?",
+                (context.run_id, context.tool_call_id),
+            ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        return request_outcome(ModelResponse.model_validate_json(row[0]), draft, request)
+
+    def unverified_document(
+        self, context, draft, checked, issues, *, include_summaries=True, per_item=True
+    ):
         # Accept a complete negative model review or the owned exact-history fact check.
         # Capacity, unsafe input, service and protocol failures retain their error path.
         from app.agent.protocol import ModelResponse
@@ -137,7 +217,11 @@ class BriefStore:
                 "SELECT response_json FROM brief_reviews WHERE run_id=? AND tool_call_id=?",
                 (context.run_id, context.tool_call_id),
             ).fetchone()
-        if row is None:
+        if per_item:
+            outcome = self.saved_outcome(context, draft, checked)
+            if outcome is None:
+                return None
+        elif row is None:
             reviewer = ReviewInput(self.research, self.rules.sources, self.rules.settings)
             try:
                 history = reviewer.related_history(context, draft)
@@ -159,15 +243,30 @@ class BriefStore:
         if outcome.approved or outcome.issues != tuple(issues):
             self._problem()
         run = self.runs.get_run(context.run_id, context.user_id)
+        keep = retained_indices(draft, checked, outcome) if per_item else ()
         proposed = unverified_draft(
-            draft, checked, issues, run.subscription.topics, include_summaries=include_summaries
+            draft,
+            checked,
+            issues,
+            run.subscription.topics,
+            include_summaries=include_summaries,
+            keep_indices=keep,
+            preserve_pending=per_item,
         )
         if proposed is None:
             return None
-        pending, rejected = self.rules.check(context, proposed, enrich_pending=include_summaries)
+        pending, rejected = self.rules.check(
+            context, proposed, enrich_pending=include_summaries, auto_locate=per_item
+        )
         if rejected is not None:
             return None
-        return BriefDocument(**{**pending.document.model_dump(), "review_status": "unverified"})
+        document = BriefDocument(
+            **{
+                **pending.document.model_dump(),
+                "review_status": "partial" if keep else "unverified",
+            }
+        )
+        return review_notes(document, outcome, keep) if per_item else document
 
     def prepared(self, context, draft):
         with self.database.connection() as connection:
@@ -186,13 +285,21 @@ class BriefStore:
         return job.result
 
     def stage(
-        self, context, draft, checked, review_basis, *, fallback_document=None, review_issues=()
+        self,
+        context,
+        draft,
+        checked,
+        review_basis,
+        *,
+        fallback_document=None,
+        review_issues=(),
+        review_outcome=None,
     ):
         call = self.calls.get_call(context.run_id, context.user_id, context.tool_call_id)
         if call.status != "executing" or call.name != "submit_brief":
             raise PermissionError("submission intent requires an executing server-bound call")
         job = SubmissionJob(
-            version=2,
+            version=3,
             brief_id="brief-" + uuid4().hex,
             run_id=context.run_id,
             tool_call_id=context.tool_call_id,
@@ -204,6 +311,7 @@ class BriefStore:
             review_basis=review_basis,
             fallback_document=fallback_document,
             review_issues=review_issues,
+            review_outcome=review_outcome,
         )
         if len(job.result.model_dump_json()) > self.rules.settings.max_tool_result_chars:
             raise ToolFailure("RESULT_TOO_LARGE", "提交确认无法容纳，请检查结果大小配置。")
@@ -224,6 +332,7 @@ class BriefStore:
                     or saved.unverified_items != checked.document.unverified_items
                     or saved.fallback_document != fallback_document
                     or saved.review_issues != tuple(review_issues)
+                    or saved.review_outcome != review_outcome
                 ):
                     self._problem()
                 return saved.result
@@ -316,14 +425,24 @@ class BriefStore:
                 HistoryEvent.model_validate_json(
                     json.dumps(
                         {
-                            key: value
-                            for key, value in item.model_dump(mode="json").items()
-                            if key in HistoryEvent.model_fields
+                            "citations": [
+                                {
+                                    key: value
+                                    for key, value in ref.model_dump(mode="json").items()
+                                    if key in HistoryReference.model_fields
+                                }
+                                for ref in item.citations
+                            ],
+                            **{
+                                key: value
+                                for key, value in item.model_dump(mode="json").items()
+                                if key in HistoryEvent.model_fields and key != "citations"
+                            },
                         },
                         ensure_ascii=False,
                     )
                 )
-                for item in job.draft.items
+                for item in checked.document.items
             )
             self.research.record_delivery(connection, run.id, run.user_id, job.brief_id, events)
         self.outbox.reserve(connection, run.id, run.user_id, job.brief_id)
@@ -338,11 +457,16 @@ class BriefStore:
                 "item_count": len(checked.document.items),
                 "review_basis": job.review_basis,
                 "duplicate_hints": list(checked.duplicate_hints),
+                "citation_adjustments": list(checked.citation_adjustments),
                 "items": [
                     {"title": item.title, "selection_reason": item.selection_reason}
                     for item in checked.document.items
                 ],
-                "basis": "server_unverified_fallback"
+                "basis": (
+                    "server_item_review"
+                    if checked.document.review_status == "partial"
+                    else "server_unverified_fallback"
+                )
                 if job.fallback_document
                 else "model_reported",
                 "review_status": checked.document.review_status,

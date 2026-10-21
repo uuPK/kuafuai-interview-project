@@ -74,6 +74,23 @@ class ReviewStore:
             )
         return None
 
+    def saved_request(self, context):
+        """Resume the persisted protocol version with its original input binding."""
+        with self.database.connection() as connection:
+            _, call = self._call(connection, context)
+            row = connection.execute(
+                "SELECT * FROM brief_reviews WHERE run_id=? AND tool_call_id=?",
+                (context.run_id, context.tool_call_id),
+            ).fetchone()
+            if row is None:
+                return None
+            try:
+                request = ModelRequest.model_validate_json(row["request_json"])
+            except ValueError:
+                self._problem()
+            self._validate(row, call, request)
+            return request
+
     def start_attempt(self, context):
         with self.database.transaction() as connection:
             run, _ = self._call(connection, context)

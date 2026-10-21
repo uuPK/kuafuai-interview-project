@@ -3,7 +3,7 @@
 import json
 import re
 
-from app.agent.briefs import ReviewOutcome
+from app.agent.briefs import ItemReview, ReviewOutcome
 from app.agent.protocol import InputMessage, ModelFailure, ModelRequest, ModelResponse
 from app.agent.verification import publication_display
 from app.harness.execution import LeaseLostError
@@ -54,6 +54,46 @@ display_notes和unverified_sources由服务端生成，前者会明确展示缺�
 关键事实均已交付且没有被正文支持的新增变化时，必须拒绝对应草稿条目。
 不要补写草稿，不返回Markdown、工具调用或解释段落。批准时issues必须为空，拒绝时必须有具体问题。"""
 
+ITEM_REVIEW_PROMPT = (
+    REVIEW_PROMPT.replace(
+        '格式为{"approved":true,"issues":[]}；',
+        '格式为{"approved":true,"issues":[],"item_reviews":[{"item_index":0,"approved":true,"notes":[]}]}；',
+    )
+    + """
+本轮执行逐条核对协议：item_reviews必须恰好覆盖draft.items的每个索引，每项仅含item_index、approved、notes。
+无主新闻时item_reviews为空数组。对每条新闻独立决定，不能因另一条有问题就将其拒绝。
+拒绝的每一条必须在issues中给出该条的字段路径；通过的条目不能同时有阻断问题。
+整体approved只有在issues为空且所有条目通过时为true；全局问题仍记录在相应全局字段。
+notes为给读者看的简短中文说明数组，每项不超过300字符、最多5项，不写内部字段或核对流程。
+这是一份有原文出处的每日新闻报道，不要求替用户独立复现研究或厂商测试。
+单篇可读正文就可作为报道依据，无需必须再有第二篇报道、官方来源或独立测试。
+明确归因于“据报道”“厂商称”“论文报告”的性能、成本和能力声明，只要数字及含义与原文一致，可以通过；
+在notes注明“厂商披露，尚未独立复现”或对应的来源性质，而不是因此转入待核实。
+核心事实有正文支持时，日期缺项、非关键措辞、常用职务简称或不改变主体的译名差异可通过并按需说明；
+不要求新闻摘要照搬原文全部细节，不因未列出与摘要结论无关的测试参数拒绝。
+仍拒绝实质性的数字/单位错误、错误主体、夸大核心结论、遗漏会改变含义的关键条件及明确的事实矛盾。
+mandatory_issues是服务端已确定的同一事件事实重复问题，不能忽略；其他条目继续独立核对。
+"""
+)
+
+
+def canonical_draft(draft, checked):
+    """Keep the original call immutable; expose server-located citations to the reviewer."""
+    items = tuple(
+        item.model_copy(
+            update={
+                "citations": tuple(
+                    ref.model_copy(
+                        update={"start_offset": saved.start_offset, "end_offset": saved.end_offset}
+                    )
+                    for ref, saved in zip(item.citations, published.citations, strict=True)
+                )
+            }
+        )
+        for item, published in zip(draft.items, checked.document.items, strict=True)
+    )
+    return draft.model_copy(update={"items": items})
+
 
 class ReviewInputProblem(Exception):
     def __init__(self, field, explanation):
@@ -78,7 +118,7 @@ def draft_fields(draft):
     return sorted(fields)
 
 
-def parse_review(response, draft):
+def parse_review(response, draft, *, require_items=False, mandatory_issues=()):
     try:
         if response.finish_reason != "stop" or response.message.tool_calls:
             raise ValueError("incomplete or tool response")
@@ -98,6 +138,47 @@ def parse_review(response, draft):
         fields = draft_fields(draft)
         if any(issue.field not in fields or not issue.issue.strip() for issue in outcome.issues):
             raise ValueError("invalid issue location or text")
+        if require_items and outcome.item_reviews is None:
+            raise ValueError("per-item decisions are required")
+        if outcome.item_reviews is not None:
+            indices = [item.item_index for item in outcome.item_reviews]
+            if sorted(indices) != list(range(len(draft.items))):
+                raise ValueError("item decisions must cover each item exactly once")
+            failed = {
+                int(match[1])
+                for issue in outcome.issues
+                if (match := re.match(r"^draft\.items\[(\d+)\](?:\.|$)", issue.field))
+            }
+            if any(item.approved == (item.item_index in failed) for item in outcome.item_reviews):
+                raise ValueError("item decisions conflict with blocking issues")
+        if mandatory_issues:
+            from app.tools.models import ArgumentIssue
+
+            required = tuple(ArgumentIssue.model_validate(issue) for issue in mandatory_issues)
+            rejected = {
+                int(re.match(r"^draft\.items\[(\d+)\]", issue.field)[1]) for issue in required
+            }
+            # Reserve one reason per declined item and one global reason before extras.
+            # Otherwise a verbose model response could crowd out a mandatory rejection.
+            issues = tuple(dict.fromkeys((*required, *outcome.issues)))
+            first, groups = [], set()
+            for issue in issues:
+                match = re.match(r"^draft\.items\[(\d+)\](?:\.|$)", issue.field)
+                group = match[1] if match else "global"
+                if group not in groups:
+                    first.append(issue)
+                    groups.add(group)
+            issues = tuple(dict.fromkeys((*first, *issues)))[:10]
+            outcome = ReviewOutcome(
+                approved=False,
+                issues=issues,
+                item_reviews=tuple(
+                    item.model_copy(update={"approved": False})
+                    if item.item_index in rejected
+                    else item
+                    for item in outcome.item_reviews
+                ),
+            )
         return outcome
     except (ValueError, TypeError, RecursionError):
         raise ToolFailure(
@@ -180,10 +261,19 @@ class ReviewInput:
     def unchanged_facts(draft, history):
         """Reject only an exact event/version/fact-set match; semantic cases stay with the model."""
 
+        issues = ReviewInput.duplicate_issues(draft, history)
+        if issues:
+            raise ReviewInputProblem(issues[0].field, issues[0].issue)
+
+    @staticmethod
+    def duplicate_issues(draft, history):
+        from app.tools.models import ArgumentIssue
+
         def facts(values):
             # Case can change a unit's meaning (GB vs Gb); preserve factual text exactly.
             return {" ".join(value.split()) for value in values}
 
+        issues = []
         for i, item in enumerate(draft.items):
             if item.product_version is None:
                 continue
@@ -194,10 +284,14 @@ class ReviewInput:
                     == (event["product_version"] or "").casefold()
                     and facts(item.key_facts) == facts(event["key_facts"])
                 ):
-                    raise ReviewInputProblem(
-                        f"draft.items[{i}].key_facts",
-                        "同一事件及版本的关键事实已全部交付，请补充有正文支持的新进展或换题",
+                    issues.append(
+                        ArgumentIssue(
+                            field=f"draft.items[{i}].key_facts",
+                            issue="同一事件及版本的关键事实已全部交付，请补充有正文支持的新进展或换题",
+                        )
                     )
+                    break
+        return tuple(issues)
 
     def evidence(self, context, draft, checked):
         evidence, loaded = [], {}
@@ -324,10 +418,24 @@ class ReviewInput:
             )
         return {"discoveries": discoveries, "materials": materials}
 
-    def build(self, context, draft, checked):
+    def build(self, context, draft, checked, *, protocol=2):
+        if protocol >= 2:
+            draft = canonical_draft(draft, checked)
         self.chinese(draft)
         history = self.related_history(context, draft)
-        self.unchanged_facts(draft, history)
+        duplicates = self.duplicate_issues(draft, history)
+        if protocol == 1:
+            self.unchanged_facts(draft, history)
+        elif duplicates and len(duplicates) == len(draft.items):
+            problem = ReviewInputProblem(duplicates[0].field, duplicates[0].issue)
+            problem.outcome = ReviewOutcome(
+                approved=False,
+                issues=duplicates,
+                item_reviews=tuple(
+                    ItemReview(item_index=i, approved=False) for i in range(len(draft.items))
+                ),
+            )
+            raise problem
         run = self.research.runs.get_run(context.run_id, context.user_id)
         packet = {
             "subscription": {
@@ -355,12 +463,18 @@ class ReviewInput:
         packet["research_observations"] = self.research_evidence(
             context, include_bodies=not draft.items and not draft.unverified_items
         )
+        if protocol >= 2:
+            packet.update(
+                review_protocol=2, mandatory_issues=[issue.model_dump() for issue in duplicates]
+            )
         packet = json.loads(json.dumps(packet, ensure_ascii=False))
         if self.redactor.clean(packet) != packet:
             raise ReviewInputProblem("draft", "核对材料含凭据或认证信息，请换用可安全核对的来源")
         request = ModelRequest(
             messages=(
-                InputMessage(role="system", content=REVIEW_PROMPT),
+                InputMessage(
+                    role="system", content=ITEM_REVIEW_PROMPT if protocol >= 2 else REVIEW_PROMPT
+                ),
                 InputMessage(role="user", content=json.dumps(packet, ensure_ascii=False)),
             ),
             tools=(),
@@ -370,6 +484,16 @@ class ReviewInput:
                 "draft", "引用上下文及相关历史超过模型输入边界，请减少条目或重选证据"
             )
         return request
+
+
+def request_outcome(response, draft, request):
+    packet = json.loads(request.messages[1].content)
+    return parse_review(
+        response,
+        draft,
+        require_items=packet.get("review_protocol", 1) >= 2,
+        mandatory_issues=packet.get("mandatory_issues", ()),
+    )
 
 
 class IndependentReviewer:
@@ -382,13 +506,15 @@ class IndependentReviewer:
         self.redactor = Redactor(settings)
 
     async def __call__(self, context, draft, checked):
+        saved = self.store.saved_request(context)
+        protocol = json.loads(saved.messages[1].content).get("review_protocol", 1) if saved else 2
         try:
-            request = self.input.build(context, draft, checked)
+            request = self.input.build(context, draft, checked, protocol=protocol)
         except ReviewInputProblem as problem:
             return problem.outcome
         response = self.store.prepare(context, request)
         if response is not None:
-            return parse_review(response, draft)
+            return request_outcome(response, draft, request)
         if self.model is None:
             raise ToolFailure(
                 "BRIEF_REVIEW_UNAVAILABLE",
@@ -425,7 +551,7 @@ class IndependentReviewer:
             json.dumps(self.redactor.clean(response.model_dump(mode="json")), ensure_ascii=False)
         )
         try:
-            outcome = parse_review(response, draft)
+            outcome = request_outcome(response, draft, request)
         except ToolFailure:
             self.store.save_response(context, request, response, None)
             raise

@@ -82,11 +82,33 @@ class ToolExecutor:
     def _argument_error(self, definition: ToolDefinition, error: Exception) -> ToolResult:
         issues = ()
         if isinstance(error, ValidationError):
+            # Report nested schema paths without echoing unknown keys or input values.
+            known = set()
+
+            def properties(schema):
+                if isinstance(schema, dict):
+                    known.update(schema.get("properties", {}))
+                    for child in schema.values():
+                        properties(child)
+                elif isinstance(schema, list):
+                    for child in schema:
+                        properties(child)
+
+            properties(definition.parameters.model_json_schema())
+
+            def location(parts):
+                path = ""
+                for part in parts[:12]:
+                    if isinstance(part, int):
+                        path += f"[{part}]"
+                    else:
+                        name = part if part in known else "[unknown]"
+                        path += ("." if path else "") + name
+                return (path or "[unknown]")[:80]
+
             issues = tuple(
                 ArgumentIssue(
-                    field=str(item["loc"][0])
-                    if item["loc"] and item["loc"][0] in definition.parameters.model_fields
-                    else "[unknown]",
+                    field=location(item["loc"]),
                     issue=item["type"][:80],
                 )
                 for item in error.errors(
@@ -94,7 +116,9 @@ class ToolExecutor:
                 )[:10]
             )
         return ToolResult.failure(
-            "INVALID_ARGUMENTS", "参数不符合工具 schema，请检查字段与类型。", details=issues
+            "INVALID_ARGUMENTS",
+            "参数不符合工具 schema，请按字段路径检查类型；额外字段须从对应对象删除。",
+            details=issues,
         )
 
     def finish(

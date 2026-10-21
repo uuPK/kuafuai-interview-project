@@ -407,3 +407,17 @@ POST /briefs/{brief_id}/mail 接受空对象，经身份、CSRF、归属、配�
 每日 HH:mm 继续由 subscription/schedules 执行，页面明确到点生成、完成后发送。前端通过 briefView 与会话取消保护迟到响应；新接口没有新增 SMTP 配置、权限开关或数据库表。针对性验收见 test_manual_mail.py、test_verification_display.py、test_unverified_fallback.py 与 test_frontend_state.mjs；既有 test_schedules.py 验证时区、改时、暂停和日唯一。
 
 发送可用性还检查固定收件人是否符合 SMTP_TEST_RECIPIENT；GET 返回 unavailable_reason，名单不匹配时禁用发送并显示原因，POST 在入队前返回 MAIL_TEST_RECIPIENT_MISMATCH，不暴露允许地址。SMTP 发送前继续执行同一校验。
+
+## 2026-10-21 逐条核对与混合交付
+
+独立核对协议2增加 `item_reviews`，每条主新闻索引必须恰好出现一次，包含 approved 与读者可见 notes。单篇可读原文可以作为报道依据；厂商性能、成本、能力等声明明确归因，未独立复现作为说明显示。日期缺项、常用简称与不改变事实的措辞差异不作为阻断；核心数字、单位、主体、关键条件与结论冲突继续拒绝。确定的历史事实重复以 mandatory_issues 加入核对，即使模型误批准也不能忽略；其他新闻继续核对。
+
+第二次提交仍被有效事实核对拒绝时，只保留明确通过的条目，未通过项保留简介、问题和原文链接。混合文档使用 `review_status=partial`；全局问题、旧协议缺少逐条决定时整份待核实。共享同一候选的条目不能同时出现在主新闻与待核实栏。历史写入最终保留项，页面和邮件显示相同内容及说明；前端只消费文档，不参与核对决策。
+
+BriefRules 只对固定正文中唯一出现的完整 quote 自动纠正起止偏移，不修改引文内容。原调用及指纹保持不变，核对输入、文档和历史使用纠正后位置，brief_saved 事件记录原始及最终位置。多处匹配、改写引文、损坏来源、越权或服务失败仍走错误路径。待核实正文节选按当前任务及候选绑定查询，兼容已验证的网页跳转。
+
+SubmissionJob.version=3 固定逐条核对结果与文档；恢复重新验证保存的响应、来源版本与最终结果。已有版本1/2及已保存协议1核对仍使用原规则和原输入哈希，不额外请求模型，不改写旧文档或已入队邮件。数据库仍为版本16，无新增服务配置或权限。
+
+真实五条上限预览还发现参数错误只定位到 draft，导致修订未覆盖具体对象。ToolExecutor 现返回 schema 已知字段组成的嵌套路径和数组索引，未知键替换为 [unknown]，不回显输入值；模型据此删除额外字段并重读引文。原有参数校验、结果大小和敏感内容边界保持生效。
+
+回归入口为 test_review_policy.py、test_briefs.py、test_review.py、test_unverified_fallback.py、test_verification_display.py、test_phase_three.py 和前端状态测试；真实核对固定样例使用 NEWS_REVIEW_LIVE=1，真实研究预览使用 NEWS_SERVICES_LIVE=1 并选择 real_research，不运行真实邮箱用例。具体运行结果见 acceptance.md。
